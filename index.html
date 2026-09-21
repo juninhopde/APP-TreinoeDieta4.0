@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Controle 3.2 — Dieta e Treino</title>
+
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16191A">
+<!-- O app guarda chave de API do usuário no aparelho. O CSP existe para
+     que nenhum script de terceiro consiga ser injetado e vazá-la. Os
+     destinos liberados em connect-src são só os provedores de IA que o
+     usuário pode escolher, mais o banco público de alimentos. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self';
+  script-src 'self' 'unsafe-inline' https://esm.run https://cdn.jsdelivr.net;
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src 'self' https://fonts.gstatic.com;
+  img-src 'self' blob: data:;
+  connect-src 'self' blob: data:
+    https://generativelanguage.googleapis.com
+    https://api.openai.com
+    https://api.anthropic.com
+    https://br.openfoodfacts.org
+    https://world.openfoodfacts.org
+    https://huggingface.co https://cdn.jsdelivr.net https://raw.githubusercontent.com;
+  worker-src 'self' blob:;
+  object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Controle">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="raiz">
+  <header class="topo">
+    <div class="topo-meta">
+      <span id="topo-data">—</span>
+      <button type="button" id="btn-tema">tema</button>
+    </div>
+    <div class="topo-fase" id="topo-fase">—</div>
+    <h1 class="topo-tit" id="topo-tit">—</h1>
+
+    <div class="anel-linha">
+      <div class="anel" id="anel"></div>
+      <div class="anel-txt">
+        <div class="anel-kcal" id="kcal-rest">—</div>
+        <div class="anel-rot">kcal restantes</div>
+        <div class="anel-sub" id="kcal-sub">—</div>
+      </div>
+    </div>
+    <div id="barras"></div>
+  </header>
+
+  <section class="tela" id="tela-hoje"></section>
+  <section class="tela" id="tela-treino" hidden></section>
+  <section class="tela" id="tela-analise" hidden></section>
+  <section class="tela" id="tela-progresso" hidden></section>
+  <section class="tela" id="tela-plano" hidden></section>
+  <section class="tela" id="tela-ajustes" hidden></section>
+</div>
+
+<div class="cron" id="cron" hidden>
+  <div>
+    <div class="cron-r">Descanso</div>
+    <div class="cron-t" id="cron-t">0:00</div>
+  </div>
+  <div style="display:flex;gap:6px">
+    <button type="button" data-cron="-15">&minus;15s</button>
+    <button type="button" data-cron="30">+30s</button>
+    <button type="button" data-cron="0">Pular</button>
+  </div>
+</div>
+
+<nav class="nav" id="nav">
+  <button type="button" data-tela="hoje" aria-current="page">
+    <svg viewBox="0 0 24 24"><path d="M4 5h16v15H4zM4 10h16M9 3v4M15 3v4"/></svg>Hoje
+  </button>
+  <button type="button" data-tela="treino">
+    <svg viewBox="0 0 24 24"><path d="M6 8v8M18 8v8M3 10v4M21 10v4M6 12h12"/></svg>Treino
+  </button>
+  <button type="button" data-tela="analise">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21M11 8v3l2 2"/></svg>Análise
+  </button>
+  <button type="button" data-tela="progresso">
+    <svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M7 15l4-5 3 3 5-7"/></svg>Progresso
+  </button>
+  <button type="button" data-tela="plano">
+    <svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg>Plano
+  </button>
+  <button type="button" data-tela="ajustes">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>Ajustes
+  </button>
+</nav>
+
+<div class="fundo" id="fundo" hidden>
+  <div class="gaveta" role="dialog" aria-modal="true" aria-labelledby="gaveta-tit">
+    <div class="gaveta-cab">
+      <h2 id="gaveta-tit">—</h2>
+      <button type="button" id="gaveta-x" aria-label="Fechar">&times;</button>
+    </div>
+    <div class="gaveta-corpo" id="gaveta-corpo"></div>
+  </div>
+</div>
+
+<button type="button" class="fab" id="fab-ia" aria-label="Abrir o assistente">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 5h16v11H9l-5 4z"/><circle cx="9" cy="10.5" r="1.1"/>
+    <circle cx="12.5" cy="10.5" r="1.1"/><circle cx="16" cy="10.5" r="1.1"/>
+  </svg>
+</button>
+
+<div class="toast" id="toast" hidden></div>
+
+<input type="file" id="arq-progresso" accept="image/*" class="oculto">
+
+<script src="js/dados.js"></script>
+<script src="js/treino.js"></script>
+<script src="js/fotos.js"></script>
+<script src="js/metabolismo.js"></script>
+<script src="js/off.js"></script>
+<script src="js/analise2.js"></script>
+<script src="js/diagnostico.js"></script>
+<script src="js/cardapio.js"></script>
+<script src="js/coach.js"></script>
+<script src="js/registro-nl.js"></script>
+<script src="js/agente.js"></script>
+<script src="js/memoria.js"></script>
+<script src="js/fases.js"></script>
+<script src="js/jejum.js"></script>
+<script src="js/saber.js"></script>
+<script src="js/assistente.js"></script>
+<script src="js/ia-externa.js"></script>
+<script src="js/ia-local.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
