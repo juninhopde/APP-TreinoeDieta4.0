@@ -24,6 +24,20 @@ A 2.0 é um sistema de **prescrição**: diz o que fazer na semana 7.
 | Passos e cardio | Registro manual com gasto estimado por MET — mostrado, mas **não somado** ao orçamento. |
 | Migração automática | Peso, diário, treinos, alimentos próprios e favoritos da 1.0 são importados no primeiro acesso. |
 
+## Verificação de publicação
+
+Se você subir o `index.html` sem as pastas `css/` e `js/`, o navegador mostra o
+HTML cru — nav sem estilo, campos soltos, traços no lugar dos números. Parece bug
+do app e não é.
+
+A partir da 4.1 o app detecta isso e explica na tela o que falta e como corrigir,
+em vez de mostrar a página quebrada.
+
+**No Netlify Drop, arraste a pasta inteira** — não o `index.html` sozinho e não o
+arquivo `.zip`. **No GitHub**, use Add file → Upload files e solte tudo de uma
+vez, com as pastas.
+
+
 ## Novidades da 4.1 — o assistente virou agente
 
 **13 ferramentas** que a IA executa de verdade: registrar refeição, peso, passos

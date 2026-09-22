@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Controle 3.2 — Dieta e Treino</title>
+<title>Controle — Dieta, Treino e Coach</title>
 
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#16191A">
@@ -140,5 +140,51 @@
 <script src="js/ia-externa.js"></script>
 <script src="js/ia-local.js"></script>
 <script src="js/app.js"></script>
+
+<script>
+/* Verificação de publicação.
+
+   Quando alguém sobe só o index.html — sem as pastas css/ e js/ —
+   o navegador mostra o HTML cru: nav sem estilo, campos soltos,
+   traços no lugar dos números. Parece bug do app e não é.
+   Este bloco detecta isso e explica o que falta. */
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var estilo = getComputedStyle(document.body).getPropertyValue('--concreto').trim() !== '';
+    var script = (typeof ALIMENTOS !== 'undefined');
+    if (estilo && script) return;
+
+    var faltando = [];
+    if (!estilo) faltando.push('<b>css/app.css</b> &mdash; a pasta <b>css</b> não subiu');
+    if (!script) faltando.push('<b>js/app.js</b> e os outros módulos &mdash; a pasta <b>js</b> não subiu');
+
+    var d = document.createElement('div');
+    d.id = 'aviso-publicacao';
+    d.setAttribute('style', 'position:fixed;inset:0;z-index:9999;background:#E4E5DF;color:#16191A;' +
+      'font:15px/1.55 system-ui,-apple-system,sans-serif;padding:26px 20px;overflow:auto');
+    d.innerHTML =
+      '<div style="max-width:520px;margin:0 auto">' +
+      '<div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#B4451F;' +
+      'margin-bottom:14px">Publicação incompleta</div>' +
+      '<h1 style="font-size:23px;margin:0 0 14px;font-weight:600">Faltaram arquivos no servidor</h1>' +
+      '<p style="margin:0 0 14px">O <b>index.html</b> chegou, mas os arquivos que ele precisa não. ' +
+      'Por isso a tela aparece sem formatação e sem funcionar.</p>' +
+      '<p style="margin:0 0 8px"><b>Não encontrei:</b></p>' +
+      '<ul style="margin:0 0 18px;padding-left:20px">' + faltando.map(function (x) {
+        return '<li style="margin-bottom:5px">' + x + '</li>'; }).join('') + '</ul>' +
+      '<div style="border-left:4px solid #B4451F;background:#fff;padding:13px 15px;margin-bottom:16px">' +
+      '<p style="margin:0 0 9px"><b>Como resolver</b></p>' +
+      '<p style="margin:0 0 9px">Suba <b>todo o conteúdo</b> da pasta, mantendo a estrutura:</p>' +
+      '<pre style="margin:0 0 9px;font:12px/1.6 ui-monospace,monospace;background:#F3F3EE;padding:10px;' +
+      'overflow-x:auto">index.html\nsw.js\nmanifest.webmanifest\ncss/app.css\njs/  (19 arquivos)\nicons/  (3 arquivos)</pre>' +
+      '<p style="margin:0">No <b>Netlify Drop</b>, arraste a <b>pasta inteira</b> — não o index.html sozinho ' +
+      'e não o arquivo .zip. No <b>GitHub</b>, use Add file &rarr; Upload files e solte tudo de uma vez, ' +
+      'com as pastas.</p></div>' +
+      '<p style="font-size:13px;color:#5A5F5C;margin:0">Se você extraiu o zip e a pasta ' +
+      '<b>css</b> ou <b>js</b> está lá, o problema é só o envio: refaça arrastando tudo junto.</p></div>';
+    document.body.appendChild(d);
+  }, 400);
+});
+</script>
 </body>
 </html>

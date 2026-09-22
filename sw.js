@@ -1,5 +1,5 @@
 /* Service worker — cache offline + clique em notificação */
-const CACHE = 'controle-v4-1';
+const CACHE = 'controle-v4-1-1';
 const ARQUIVOS = [
   './',
   './index.html',
