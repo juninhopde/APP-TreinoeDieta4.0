@@ -1,9 +1,5 @@
 /* ══════════════════════════════════════════════════════════
    CONVERSA LIVRE COM IA EXTERNA — opcional (Integrada com Agente)
-
-   Cada utilizador coloca a sua chave. A chamada sai do navegador 
-   diretamente para o provedor. Integrado com o Tool Engine (Agente)
-   para executar comandos no aplicativo.
    ══════════════════════════════════════════════════════════ */
 
 const CHAVE_IA_PREFIXO = 'ctrl.ia.';
@@ -12,17 +8,18 @@ const IA_PROVEDORES = {
   gemini: {
     rot: 'Google Gemini',
     etiqueta: 'camada gratuita',
-    modeloPadrao: 'gemini-2.5-flash',
-    modelos: ['gemini-2.5-flash', 'gemini-1.5-flash'],
+    modeloPadrao: 'gemini-3.6-flash',
+    modelos: ['gemini-3.6-flash', 'gemini-3.5-flash'],
     ondePegar: 'aistudio.google.com/apikey',
     custo: 'Camada gratuita permanente, sem cartão de crédito. Cada pessoa tem a própria cota diária.',
     privacidade: 'O Google declara que requisições da camada gratuita podem ser usadas para treinar os modelos dele. Na camada paga, não.',
     async chamar({ chave, modelo, sistema, pergunta }) {
+      // FIX: Passando a chave AQ. diretamente na URL para evitar o bug de cabeçalho da Google
       const url = 'https://generativelanguage.googleapis.com/v1beta/models/' 
-        + encodeURIComponent(modelo || this.modeloPadrao) + ':generateContent';
+        + encodeURIComponent(modelo || this.modeloPadrao) + ':generateContent?key=' + chave;
       const r = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': chave },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sistema }] },
           contents: [{ parts: [{ text: pergunta }] }],
@@ -43,7 +40,7 @@ const IA_PROVEDORES = {
     modeloPadrao: 'gpt-4o-mini',
     modelos: ['gpt-4o-mini', 'gpt-4o'],
     ondePegar: 'platform.openai.com/api-keys',
-    custo: 'Pago por uso. Fração de cêntimo por pergunta no modelo mini.',
+    custo: 'Pago por uso. Fração de centavo por pergunta no modelo mini.',
     privacidade: 'A OpenAI não treina com dados de API por padrão.',
     async chamar({ chave, modelo, sistema, pergunta }) {
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -64,7 +61,7 @@ const IA_PROVEDORES = {
   anthropic: {
     rot: 'Anthropic Claude',
     etiqueta: 'pago por uso',
-    modeloPadrao: 'claude-3-haiku-20240307', // Atualizado para versão estável
+    modeloPadrao: 'claude-3-haiku-20240307',
     modelos: ['claude-3-haiku-20240307', 'claude-3-5-sonnet-20240620'],
     ondePegar: 'console.anthropic.com',
     custo: 'Pago por uso.',
@@ -92,8 +89,8 @@ const IA_PROVEDORES = {
 function erroIA(status, corpo) {
   const t = String(corpo || '').replace(/\s+/g, ' ').slice(0, 120);
   if (status === 400) return new Error('Requisição rejeitada. Confira o modelo escolhido. ' + t);
-  if (status === 401 || status === 403) return new Error('Chave inválida ou sem permissão.');
-  if (status === 404) return new Error('Modelo não encontrado neste provedor.');
+  if (status === 401 || status === 403) return new Error('Chave inválida. Confirme se colou o texto inteiro da chave.');
+  if (status === 404) return new Error('Modelo descontinuado pela Google. Escolha o 3.6-flash na lista.');
   if (status === 429) return new Error('Cota do dia esgotada ou chamadas rápidas demais.');
   if (status >= 500) return new Error('O provedor está fora do ar (' + status + ').');
   return new Error('Erro ' + status + '. ' + t);
@@ -159,7 +156,7 @@ async function testarIA(prov, modelo) {
   return t.trim().slice(0, 40);
 }
 
-/* ── FUNÇÃO PRINCIPAL REESCRITA PARA INTERCETAR COMANDOS DO AGENTE ── */
+/* ── INTERCETAR COMANDOS DO AGENTE ── */
 async function perguntarIA(prov, modelo, contexto, pergunta, intensidade) {
   const p = IA_PROVEDORES[prov];
   if (!p) throw new Error('Provedor desconhecido.');
@@ -167,7 +164,6 @@ async function perguntarIA(prov, modelo, contexto, pergunta, intensidade) {
   const chave = IAChave.ler(prov);
   if (!chave) throw new Error('Sem chave configurada para ' + p.rot + '.');
   
-  // 1. Faz a chamada ao provedor escolhido
   let resposta = await p.chamar({ 
     chave, 
     modelo, 
@@ -175,16 +171,12 @@ async function perguntarIA(prov, modelo, contexto, pergunta, intensidade) {
     pergunta 
   }).catch(e => { throw traduzirFalha(e); });
 
-  // 2. Interceta Comandos para executar Ações no App (A Magia do Agente)
   if (typeof Agente !== 'undefined' && resposta.includes('[CMD:')) {
     const toolResult = Agente.validarComando(resposta);
     
     if (toolResult && toolResult.executado) {
-       // Anexa o resultado da ação para o utilizador ver o que foi feito
        resposta += `\n\n*(Ação do Coach: ${toolResult.resultado})*`;
     }
-    
-    // Limpa a tag de código [CMD:...] para não sujar o ecrã do utilizador
     resposta = resposta.replace(/\[CMD:[^\]]+\]/g, '').trim();
   }
 
