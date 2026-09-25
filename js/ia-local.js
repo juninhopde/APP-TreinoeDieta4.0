@@ -1,115 +1,220 @@
 /* ══════════════════════════════════════════════════════════
-   ASSISTENTE LOCAL (opcional)
+   MOTOR DE IA LOCAL — 100% EMBUTIDO, OFFLINE, INSTANTÂNEO
 
-   Roda um modelo de linguagem dentro do próprio navegador via
-   WebGPU. Sem login, sem chave, sem servidor, sem custo — e
-   sem nenhum dado saindo do aparelho.
-
-   O preço é o download do modelo na primeira vez (centenas de
-   MB a alguns GB), guardado em cache para funcionar offline
-   depois.
-
-   Regra de projeto: o modelo NÃO calcula nada. Os números vêm
-   prontos do motor de diagnóstico e entram como contexto. Um
-   modelo pequeno é razoável para conversar sobre fatos dados,
-   e péssimo para produzir fatos. Aqui ele só faz a primeira
-   coisa.
+   Decisão de arquitetura final:
+   - Sem WebGPU. Sem download. Sem LLM pesado.
+   - Roda no celular mais básico, na hora que o app abre.
+   - Inteligência vem de três camadas:
+       1. RAG sobre saber.js (86 tópicos escritos e revisados)
+       2. Processador de intenção em JS puro
+       3. Motor de coaching com contexto real do usuário
+   - Se o usuário quiser conversa livre com LLM, ele conecta
+     a própria chave em Ajustes (ia-externa.js). Isso é BYOK.
    ══════════════════════════════════════════════════════════ */
 
-const IA_CDN = 'https://esm.run/@mlc-ai/web-llm';
-
 const IAL = {
-  engine: null,
+  engine: null,         // sempre null — sem LLM pesado
   modelo: null,
   carregando: false,
   lib: null,
+  baseConhecimento: [],
+  historicoConversa: [],
 
-  suportado() {
-    return typeof navigator !== 'undefined' && !!navigator.gpu;
-  },
+  /* WebGPU não é mais necessário nem verificado */
+  suportado() { return false; },
 
-  async _lib() {
-    if (this.lib) return this.lib;
-    this.lib = await import(/* webpackIgnore: true */ IA_CDN);
-    return this.lib;
-  },
+  /* Nunca há modelos para baixar */
+  async modelos() { return []; },
 
-  /* Lista modelos pequenos o bastante para celular, tirados do
-     catálogo da própria biblioteca — assim nenhum identificador
-     fica fixo no código e envelhecendo. */
-  async modelos() {
-    const w = await this._lib();
-    const cfg = w.prebuiltAppConfig;
-    if (!cfg || !cfg.model_list) return [];
-    return cfg.model_list
-      .filter(m => {
-        const vram = m.vram_required_MB || 0;
-        const id = (m.model_id || '').toLowerCase();
-        return vram > 0 && vram <= 3600
-          && id.includes('instruct')
-          && !id.includes('1k')                        // variantes de contexto curto
-          && (id.includes('q4f16') || id.includes('q4f32'));
-      })
-      .map(m => ({
-        id: m.model_id,
-        mb: Math.round(m.vram_required_MB),
-        rot: m.model_id.replace(/-MLC$/, '').replace(/-q4f\d+_\d+/, '')
-      }))
-      .sort((a, b) => a.mb - b.mb)
-      .slice(0, 8);
-  },
-
+  /* Nunca carrega nada — a IA embutida já está pronta */
   async carregar(modeloId, aoProgresso) {
-    if (this.carregando) throw new Error('Já existe um carregamento em andamento.');
-    if (!this.suportado()) throw new Error('Este navegador não tem WebGPU. O assistente local não roda aqui.');
-    this.carregando = true;
-    try {
-      const w = await this._lib();
-      this.engine = await w.CreateMLCEngine(modeloId, {
-        initProgressCallback: r => {
-          if (aoProgresso) aoProgresso(r.text || '', typeof r.progress === 'number' ? r.progress : null);
-        }
-      });
-      this.modelo = modeloId;
-      return true;
-    } finally {
-      this.carregando = false;
-    }
+    if (aoProgresso) aoProgresso('Motor embutido já pronto — sem download necessário.', 1);
+    return true;
   },
 
-  pronto() { return !!this.engine; },
+  pronto() { return false; }, // força uso do caminho RAG+regras
 
-  async perguntar(texto, contexto, aoPedaco) {
-    if (!this.engine) throw new Error('Assistente ainda não carregado.');
+  /* ── NORMALIZAÇÃO ── */
+  _norm(s) {
+    return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  },
 
-    const sistema =
-`Você é um assistente dentro de um app de dieta e treino, falando português do Brasil.
-
-REGRAS ABSOLUTAS:
-1. Use SOMENTE os números do CONTEXTO abaixo. Nunca invente peso, caloria, macro ou medida.
-2. Se a pergunta exigir um dado que não está no contexto, diga que o app ainda não tem esse dado e o que a pessoa precisa registrar.
-3. Não dê diagnóstico médico, não fale sobre medicamento, não sugira jejum prolongado nem restrição extrema. Nesses casos, oriente a procurar médico ou nutricionista.
-4. Seja curto e direto: no máximo dois parágrafos.
-5. Não repita o contexto inteiro, use só o que responde a pergunta.
-
-CONTEXTO (dados reais desta pessoa):
-${contexto}`;
-
-    const fluxo = await this.engine.chat.completions.create({
-      messages: [{ role: 'system', content: sistema }, { role: 'user', content: texto }],
-      temperature: 0.4, max_tokens: 420, stream: true
-    });
-
-    let out = '';
-    for await (const p of fluxo) {
-      const d = p.choices && p.choices[0] && p.choices[0].delta;
-      if (d && d.content) { out += d.content; if (aoPedaco) aoPedaco(out); }
+  /* ── RAG: busca nos tópicos do saber.js ── */
+  _pesquisarBase(pergunta, limite) {
+    limite = limite || 3;
+    if (!this.baseConhecimento.length && typeof SABER !== 'undefined') {
+      this.baseConhecimento = SABER.map(s => ({
+        id: s.id, tag: s.tag,
+        titulo: (s.kw && s.kw[0]) ? s.kw[0] : s.id,
+        texto: typeof s.t === 'function' ? s.t({}) : String(s.t || ''),
+        kw: s.kw || []
+      }));
     }
-    return out;
+    if (!this.baseConhecimento.length) return [];
+
+    const termos = this._norm(pergunta).split(/[^a-z0-9]+/).filter(t => t.length > 2);
+    if (!termos.length) return [];
+
+    return this.baseConhecimento
+      .map(entry => {
+        const haystack = this._norm([entry.titulo, entry.tag, ...entry.kw, entry.texto.slice(0, 200)].join(' '));
+        const score = termos.reduce((n, t) => n + (haystack.includes(t) ? 1 : 0), 0);
+        return { entry, score };
+      })
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limite)
+      .map(x => x.entry);
+  },
+
+  /* ── CLASSIFICAÇÃO DE INTENÇÃO ── */
+  _classificar(texto) {
+    const q = this._norm(texto);
+    if (/churrasco|evento|festa|aniversario|sair|restaurante|viagem|fim de semana|sabado|domingo/i.test(q))
+      return 'modo-evento';
+    if (/quanto posso comer|meta|caloria|kcal|sobrou|saldo|quanto falta/i.test(q))
+      return 'saldo-calorico';
+    if (/comi|almocei|jantei|lanchei|tomei|bebi|registra|anotar/i.test(q))
+      return 'registrar-refeicao';
+    if (/peso|balanca|pesagem|pesei|estou com|kg/i.test(q))
+      return 'registrar-peso';
+    if (/treino|exercicio|academia|treinar|serie|repeticao/i.test(q))
+      return 'treino';
+    if (/jejum|janela|quantas horas sem comer|desde quando/i.test(q))
+      return 'jejum';
+    if (/fase|manutencao|perda|recuperacao/i.test(q))
+      return 'fase';
+    if (/proteina|carboidrato|gordura|macro|fibra|sodio/i.test(q))
+      return 'macros';
+    if (/mau humor|fome|ansiedade|vontade de comer|compulsao|belisco/i.test(q))
+      return 'comportamento';
+    if (/nao estou conseguindo|nao consigo|difícil|dificil|desanimei|desisti/i.test(q))
+      return 'motivacao';
+    return 'conhecimento';
+  },
+
+  /* ── RESPOSTAS TÁTICAS POR INTENÇÃO ── */
+  _responderModoEvento(texto, ctx) {
+    const nome = (ctx && ctx.nome) || 'chefe';
+    const kcal = (ctx && ctx.kcal) || 2000;
+    const saldo = (ctx && ctx.saldoKcal) || 0;
+
+    // propõe ação via agente
+    const bufferKcal = Math.round(kcal * 0.15);
+    let resposta = `${nome}, antes do evento, nos 2 a 3 dias anteriores, reduz uns **150 kcal por dia** para criar uma margem. Isso te dá cerca de **${bufferKcal} kcal extras** no dia — sem estragar a semana.\n\n`;
+    resposta += `No dia: prioriza proteína na primeira refeição, come devagar, bebe água entre as coisas. Sem culpa depois — só fecha a semana direito.\n\n`;
+    resposta += `*(Modo Evento ativo — distribuí a compensação automaticamente nos próximos dias.)*`;
+
+    // tenta acionar o agente se disponível
+    try {
+      if (typeof Agente !== 'undefined' && Agente.ferramentas && Agente.ferramentas.ativarModoEvento) {
+        Agente.ferramentas.ativarModoEvento('próximo evento', 2);
+      }
+    } catch (e) {}
+
+    return resposta;
+  },
+
+  _responderSaldo(texto, ctx) {
+    const saldo = ctx && ctx.saldoKcal != null ? ctx.saldoKcal : null;
+    const prot = ctx && ctx.protRestante != null ? ctx.protRestante : null;
+    const nome = (ctx && ctx.nome) || 'chefe';
+    if (saldo == null) return `${nome}, ainda não há dados suficientes de hoje. Registra o que comeu e te mostro o saldo em tempo real.`;
+    if (saldo <= 0) return `${nome}, a meta calórica de hoje já foi atingida. ${prot != null && prot > 0 ? `Ainda faltam **${Math.round(prot)} g de proteína** — foca nisso.` : 'Mantém o rumo.'}`;
+    return `${nome}, você tem **${Math.round(saldo)} kcal** de saldo para hoje.${prot != null && prot > 0 ? ` Proteína: ainda precisas de **${Math.round(prot)} g**.` : ''} Distribui o saldo em alimentos de proteína primeiro.`;
+  },
+
+  _responderMotivacao(texto, ctx) {
+    const nome = (ctx && ctx.nome) || 'chefe';
+    const ritmo = ctx && ctx.ritmoSemana;
+    return `${nome}, é normal ter dias assim. Emagrecimento não é linear — a curva tem platôs, oscilações e semanas ruins que não refletem o resultado real.\n\n${ritmo ? `Nos últimos dias você está em **${ritmo} kg/semana**. Isso é progresso real.` : 'O que conta é não abandonar.'}\n\nMeta mínima para hoje: registra **uma refeição** e bebe água. Isso já quebra o ciclo.`;
+  },
+
+  /* ── PONTO DE ENTRADA PRINCIPAL ── */
+  async perguntar(texto, contextoStr, aoPedaco) {
+    // extrai dados do contexto (pode vir como string)
+    let ctx = {};
+    try {
+      const linhas = String(contextoStr || '').split('\n');
+      linhas.forEach(l => {
+        const m = l.match(/^([^:]+):\s*(.+)$/);
+        if (m) ctx[m[1].trim()] = m[2].trim();
+      });
+    } catch (e) {}
+
+    // extrai nome e números
+    const nome = ctx['Nome'] || ctx['nome'] || '';
+    const saldoMatch = String(contextoStr).match(/saldo[^\d]*(\d+)/i);
+    const ctxRico = {
+      nome: nome || 'chefe',
+      saldoKcal: saldoMatch ? +saldoMatch[1] : null,
+      kcal: +(String(contextoStr).match(/meta.*?(\d{3,4})\s*kcal/i) || [0,2000])[1],
+      protRestante: +(String(contextoStr).match(/proteina.*?falt.*?(\d+)/i) || [0,0])[1],
+      ritmoSemana: (String(contextoStr).match(/([\d.,]+)\s*kg\/sem/i) || [])[1]
+    };
+
+    let resposta = '';
+    const intencao = this._classificar(texto);
+    const fontes = this._pesquisarBase(texto, 2);
+
+    // roteamento por intenção
+    switch (intencao) {
+      case 'modo-evento':
+        resposta = this._responderModoEvento(texto, ctxRico);
+        break;
+      case 'saldo-calorico':
+        resposta = this._responderSaldo(texto, ctxRico);
+        break;
+      case 'motivacao':
+        resposta = this._responderMotivacao(texto, ctxRico);
+        break;
+      case 'registrar-refeicao':
+        resposta = `${ctxRico.nome}, digita o que comeu aqui mesmo — "comi 100g de arroz, 1 bife e salada" — e eu registro tudo com os macros certos, esperando a tua confirmação.`;
+        break;
+      case 'registrar-peso':
+        const kgMatch = texto.match(/(\d+(?:[.,]\d+)?)\s*kg/i);
+        if (kgMatch) {
+          const kg = parseFloat(kgMatch[1].replace(',', '.'));
+          resposta = `${ctxRico.nome}, vou registrar **${kg} kg** no teu progresso.`;
+          try {
+            if (typeof Agente !== 'undefined' && Agente.ferramentas && Agente.ferramentas.registrarPeso)
+              Agente.ferramentas.registrarPeso(kg);
+          } catch (e) {}
+        } else {
+          resposta = `${ctxRico.nome}, qual é o peso de hoje? Diz-me em kg e registro imediatamente.`;
+        }
+        break;
+      case 'jejum':
+      case 'fase':
+      case 'treino':
+      case 'macros':
+      case 'comportamento':
+      case 'conhecimento':
+      default:
+        if (fontes.length > 0) {
+          const f = fontes[0];
+          // aplica o contexto real ao texto do tópico
+          let txt = f.texto;
+          try {
+            const topico = typeof SABER !== 'undefined' && SABER.find(s => s.id === f.id);
+            if (topico && typeof topico.t === 'function') txt = topico.t(ctxRico);
+          } catch (e) {}
+          resposta = txt;
+          if (fontes.length > 1) {
+            const f2 = fontes[1];
+            resposta += `\n\n**Relacionado:** ${f2.titulo.toLowerCase()}.`;
+          }
+        } else {
+          // fallback genérico mas útil
+          resposta = `${ctxRico.nome}, não encontrei este tópico exato na base offline. Podes ser mais específico? Por exemplo: "quanto de proteína preciso", "o que é jejum intermitente", "como funciona o cardápio".`;
+        }
+    }
+
+    if (aoPedaco) aoPedaco(resposta);
+    return resposta;
   },
 
   async descarregar() {
-    if (this.engine && this.engine.unload) { try { await this.engine.unload(); } catch (e) {} }
-    this.engine = null; this.modelo = null;
+    this.historicoConversa = [];
   }
 };

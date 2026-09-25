@@ -22,6 +22,16 @@ const norm = s => String(s).toLowerCase().normalize('NFD')
    `A` = lista de achados, `C` = contexto vivo do app.        */
 const INTENCOES = [
 
+  { id:'reg-peso', peso: 9,
+    kw:['pesei','peso hoje','registra meu peso','meu peso e','estou com kg','to com kg',
+        'registra kg','anota meu peso','peso de hoje','registra peso','meu peso','peso atual'],
+    fn: (A, C, q) => {
+      const m = q.match(/(\d+(?:[.,]\d+)?)\s*kg/i);
+      if (!m) return { tipo:'perguntar', txt:'Qual é o seu peso de hoje em kg?' };
+      return { tipo:'registrar-peso', kg: parseFloat(m[1].replace(',','.')) };
+    } },
+
+
   { id:'fase-plano', peso: 7,
     kw:['minha fase','fase do plano','estou em manutencao','estou mantendo','minha faixa',
         'faixa de manutencao','em que fase estou','estou perdendo ou mantendo'],

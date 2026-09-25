@@ -11,20 +11,7 @@
      que nenhum script de terceiro consiga ser injetado e vazá-la. Os
      destinos liberados em connect-src são só os provedores de IA que o
      usuário pode escolher, mais o banco público de alimentos. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://esm.run https://cdn.jsdelivr.net;
-  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-  font-src 'self' https://fonts.gstatic.com;
-  img-src 'self' blob: data:;
-  connect-src 'self' blob: data:
-    https://generativelanguage.googleapis.com
-    https://api.openai.com
-    https://api.anthropic.com
-    https://br.openfoodfacts.org
-    https://world.openfoodfacts.org
-    https://huggingface.co https://cdn.jsdelivr.net https://raw.githubusercontent.com;
-  worker-src 'self' blob:;
-  object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://esm.run https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self' blob: data: https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://br.openfoodfacts.org https://world.openfoodfacts.org https://huggingface.co https://cdn.jsdelivr.net https://raw.githubusercontent.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
