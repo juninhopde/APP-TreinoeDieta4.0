@@ -1,35 +1,24 @@
 /* ══════════════════════════════════════════════════════════
-   CONVERSA LIVRE COM IA EXTERNA — opcional
+   CONVERSA LIVRE COM IA EXTERNA — opcional (Integrada com Agente)
 
-   Cada usuário põe a chave dele. Não existe chave do dono do
-   app: ninguém consome cota de ninguém.
-
-   A chamada sai do navegador direto para o provedor, sem
-   servidor no meio. A chave fica no armazenamento local do
-   aparelho de quem digitou, em espaço separado do resto, e
-   nunca entra no backup.
-
-   REGRA QUE ATRAVESSA TUDO: isto é um extra. O assistente
-   embutido responde sem chave, sem internet e sem custo. Se
-   esta camada falhar por qualquer motivo — chave errada,
-   cota estourada, provedor fora, avião sem wi-fi — o app
-   volta sozinho para o embutido e avisa. Nada aqui é
-   caminho crítico.
+   Cada utilizador coloca a sua chave. A chamada sai do navegador 
+   diretamente para o provedor. Integrado com o Tool Engine (Agente)
+   para executar comandos no aplicativo.
    ══════════════════════════════════════════════════════════ */
 
-const CHAVE_IA_PREFIXO = 'ctrl.ia.';   // uma por provedor, fora do backup
+const CHAVE_IA_PREFIXO = 'ctrl.ia.';
 
 const IA_PROVEDORES = {
   gemini: {
     rot: 'Google Gemini',
     etiqueta: 'camada gratuita',
     modeloPadrao: 'gemini-2.5-flash',
-    modelos: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+    modelos: ['gemini-2.5-flash', 'gemini-1.5-flash'],
     ondePegar: 'aistudio.google.com/apikey',
     custo: 'Camada gratuita permanente, sem cartão de crédito. Cada pessoa tem a própria cota diária.',
-    privacidade: 'O Google declara que requisições da camada gratuita podem ser usadas para treinar os modelos dele. Suas perguntas e seus números passam por isso. Na camada paga, não.',
+    privacidade: 'O Google declara que requisições da camada gratuita podem ser usadas para treinar os modelos dele. Na camada paga, não.',
     async chamar({ chave, modelo, sistema, pergunta }) {
-      const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+      const url = 'https://generativelanguage.googleapis.com/v1beta/models/' 
         + encodeURIComponent(modelo || this.modeloPadrao) + ':generateContent';
       const r = await fetch(url, {
         method: 'POST',
@@ -37,7 +26,7 @@ const IA_PROVEDORES = {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sistema }] },
           contents: [{ parts: [{ text: pergunta }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 600 }
+          generationConfig: { temperature: 0.2, maxOutputTokens: 600 }
         })
       });
       if (!r.ok) throw erroIA(r.status, await r.text());
@@ -54,14 +43,14 @@ const IA_PROVEDORES = {
     modeloPadrao: 'gpt-4o-mini',
     modelos: ['gpt-4o-mini', 'gpt-4o'],
     ondePegar: 'platform.openai.com/api-keys',
-    custo: 'Pago por uso. Fração de centavo por pergunta no modelo mini.',
+    custo: 'Pago por uso. Fração de cêntimo por pergunta no modelo mini.',
     privacidade: 'A OpenAI não treina com dados de API por padrão.',
     async chamar({ chave, modelo, sistema, pergunta }) {
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + chave },
         body: JSON.stringify({
-          model: modelo || this.modeloPadrao, max_tokens: 600, temperature: 0.3,
+          model: modelo || this.modeloPadrao, max_tokens: 600, temperature: 0.2,
           messages: [{ role: 'system', content: sistema }, { role: 'user', content: pergunta }]
         })
       });
@@ -75,11 +64,11 @@ const IA_PROVEDORES = {
   anthropic: {
     rot: 'Anthropic Claude',
     etiqueta: 'pago por uso',
-    modeloPadrao: 'claude-haiku-4-5-20251001',
-    modelos: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'],
+    modeloPadrao: 'claude-3-haiku-20240307', // Atualizado para versão estável
+    modelos: ['claude-3-haiku-20240307', 'claude-3-5-sonnet-20240620'],
     ondePegar: 'console.anthropic.com',
     custo: 'Pago por uso.',
-    privacidade: 'A Anthropic não treina com dados de API por padrão. O provedor exige um cabeçalho que autoriza chamada direta do navegador — eles consideram isso má prática justamente porque a chave fica no cliente.',
+    privacidade: 'A Anthropic não treina com dados de API por padrão.',
     async chamar({ chave, modelo, sistema, pergunta }) {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -110,9 +99,6 @@ function erroIA(status, corpo) {
   return new Error('Erro ' + status + '. ' + t);
 }
 
-/* Regras que o modelo recebe. O número vem sempre do app:
-   modelo de linguagem erra aritmética, e aqui número errado
-   vira meta errada. */
 function sistemaIA(contexto, intensidade) {
   const tom = {
     normal:  'Tom: informativo e leve.',
@@ -125,21 +111,22 @@ function sistemaIA(contexto, intensidade) {
 
 REGRAS ABSOLUTAS:
 1. Use SOMENTE os números do CONTEXTO. Nunca invente peso, caloria, macro, medida ou data.
-2. Se faltar dado, diga o que a pessoa precisa registrar. Não estime para preencher lacuna.
-3. Nunca cite estudo, artigo, autor ou número de pesquisa. Se a pergunta exigir isso, diga que a recomendação segue diretrizes gerais e oriente confirmar com profissional.
-4. Não diagnostique. Não oriente início, troca, dose ou suspensão de medicamento. Não prescreva.
-5. Não sugira perda acima de 1% do peso corporal por semana, jejum prolongado, nem ingestão abaixo de 1500 kcal para homens ou 1200 para mulheres.
-6. Diante de sinal de risco — dor torácica, falta de ar, desmaio, vômito provocado, uso de laxante, gestação, lesão aguda — pare a orientação e encaminhe para profissional.
-7. Cobre COMPORTAMENTO e PROCESSO. Nunca humilhe, nunca culpe a pessoa, nunca julgue o corpo dela.
-8. No máximo dois parágrafos.
+2. Se faltar dado, diga o que a pessoa precisa registrar.
+3. Não diagnostique, nem prescreva medicamentos.
+4. Diante de sinal de risco, pare a orientação e encaminhe para profissional.
+5. Cobre COMPORTAMENTO. Nunca humilhe ou culpe a pessoa.
+
+FERRAMENTAS DISPONÍVEIS (Use comandos exatos se necessário):
+- Para registrar peso: [CMD:registrarPeso|VALOR]
+- Para ativar buffer de fim de semana: [CMD:ativarModoEvento|DIA|NIVEL_1_A_3]
+(Exemplo: Se o usuário disser "Sábado tenho churrasco", responda com [CMD:ativarModoEvento|Sábado|2])
 
 ${tom}
 
-CONTEXTO (dados reais desta pessoa, calculados pelo app):
+CONTEXTO (dados reais desta pessoa):
 ${contexto}`;
 }
 
-/* Acesso à chave, por provedor, fora do backup. */
 const IAChave = {
   ler(prov) { try { return localStorage.getItem(CHAVE_IA_PREFIXO + prov) || ''; } catch (e) { return ''; } },
   gravar(prov, v) {
@@ -151,14 +138,10 @@ const IAChave = {
   algumaConfigurada() { return Object.keys(IA_PROVEDORES).some(p => !!this.ler(p)); }
 };
 
-/* Teste de conexão: gasta uma chamada mínima e diz se funciona.
-   Melhor descobrir aqui do que no meio de uma pergunta. */
-/* fetch rejeita com TypeError quando não há rede, o domínio está
-   bloqueado ou o CORS barrou. "Failed to fetch" não ajuda ninguém. */
 function traduzirFalha(err) {
   const m = String(err && err.message || err);
   if (/failed to fetch|networkerror|load failed/i.test(m))
-    return new Error('Não consegui alcançar o provedor. Verifique a internet — e se estiver numa rede corporativa, ela pode bloquear o domínio.');
+    return new Error('Não consegui alcançar o provedor. Verifique a internet ou bloqueios de CORS/Rede Corporativa.');
   return err instanceof Error ? err : new Error(m);
 }
 
@@ -176,11 +159,34 @@ async function testarIA(prov, modelo) {
   return t.trim().slice(0, 40);
 }
 
+/* ── FUNÇÃO PRINCIPAL REESCRITA PARA INTERCETAR COMANDOS DO AGENTE ── */
 async function perguntarIA(prov, modelo, contexto, pergunta, intensidade) {
   const p = IA_PROVEDORES[prov];
   if (!p) throw new Error('Provedor desconhecido.');
+  
   const chave = IAChave.ler(prov);
   if (!chave) throw new Error('Sem chave configurada para ' + p.rot + '.');
-  return p.chamar({ chave, modelo, sistema: sistemaIA(contexto, intensidade), pergunta })
-    .catch(e => { throw traduzirFalha(e); });
+  
+  // 1. Faz a chamada ao provedor escolhido
+  let resposta = await p.chamar({ 
+    chave, 
+    modelo, 
+    sistema: sistemaIA(contexto, intensidade), 
+    pergunta 
+  }).catch(e => { throw traduzirFalha(e); });
+
+  // 2. Interceta Comandos para executar Ações no App (A Magia do Agente)
+  if (typeof Agente !== 'undefined' && resposta.includes('[CMD:')) {
+    const toolResult = Agente.validarComando(resposta);
+    
+    if (toolResult && toolResult.executado) {
+       // Anexa o resultado da ação para o utilizador ver o que foi feito
+       resposta += `\n\n*(Ação do Coach: ${toolResult.resultado})*`;
+    }
+    
+    // Limpa a tag de código [CMD:...] para não sujar o ecrã do utilizador
+    resposta = resposta.replace(/\[CMD:[^\]]+\]/g, '').trim();
+  }
+
+  return resposta;
 }

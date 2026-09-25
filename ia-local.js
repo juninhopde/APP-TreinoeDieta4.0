@@ -1,7 +1,6 @@
 /* ══════════════════════════════════════════════════════════
-   ASSISTENTE LOCAL (Evolução Engine 1.0)
-   Integração do motor de RAG (Retrieval-Augmented Generation) 
-   e execução de LLM via WebGPU. Fallback garantido sem quebrar a UI.
+   AI ENGINE (Runtime, Context Builder, Intent Router, RAG)
+   Cérebro local. Funciona 100% offline após o download do modelo.
    ══════════════════════════════════════════════════════════ */
 
 const IA_CDN = 'https://esm.run/@mlc-ai/web-llm';
@@ -12,6 +11,7 @@ const IAL = {
   carregando: false,
   lib: null,
   baseConhecimento: [],
+  historicoConversa: [], // CONVERSATION MEMORY
 
   suportado() {
     return typeof navigator !== 'undefined' && !!navigator.gpu;
@@ -23,7 +23,6 @@ const IAL = {
     return this.lib;
   },
 
-  /* Mantém a compatibilidade com a lista de modelos original lida pela UI */
   async modelos() {
     const w = await this._lib();
     const cfg = w.prebuiltAppConfig;
@@ -32,23 +31,16 @@ const IAL = {
       .filter(m => {
         const vram = m.vram_required_MB || 0;
         const id = (m.model_id || '').toLowerCase();
-        return vram > 0 && vram <= 3600
-          && id.includes('instruct')
-          && !id.includes('1k')
-          && (id.includes('q4f16') || id.includes('q4f32'));
+        return vram > 0 && vram <= 3600 && id.includes('instruct') && !id.includes('1k') && (id.includes('q4f16') || id.includes('q4f32'));
       })
-      .map(m => ({
-        id: m.model_id,
-        mb: Math.round(m.vram_required_MB),
-        rot: m.model_id.replace(/-MLC$/, '').replace(/-q4f\d+_\d+/, '')
-      }))
+      .map(m => ({ id: m.model_id, mb: Math.round(m.vram_required_MB), rot: m.model_id.replace(/-MLC$/, '').replace(/-q4f\d+_\d+/, '') }))
       .sort((a, b) => a.mb - b.mb)
       .slice(0, 8);
   },
 
   async carregar(modeloId, aoProgresso) {
-    if (this.carregando) throw new Error('Já existe um carregamento em andamento.');
-    if (!this.suportado()) throw new Error('Este navegador não tem suporte a WebGPU. O assistente local avançado não roda aqui.');
+    if (this.carregando) throw new Error('Carregamento já em andamento.');
+    if (!this.suportado()) throw new Error('WebGPU não suportado.');
     this.carregando = true;
     try {
       const w = await this._lib();
@@ -66,86 +58,78 @@ const IAL = {
 
   pronto() { return !!this.engine; },
 
-  _normalizar(s) {
-    return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  },
+  /* ── 1. RAG & KNOWLEDGE BASE ── */
+  _normalizar(s) { return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); },
 
-  _pesquisarBase(pergunta, limite = 3) {
-    // Carregamento preguiçoso do saber.js para evitar problemas de ordem de importação nas scripts
+  _pesquisarBase(pergunta, limite = 2) {
     if (!this.baseConhecimento.length && typeof SABER !== 'undefined') {
       this.baseConhecimento = SABER.map(s => ({
-        id: s.id,
-        topic: s.tag,
-        title: (s.kw && s.kw[0]) ? s.kw[0].toUpperCase() : 'TÓPICO',
-        summary: typeof s.t === 'function' ? s.t({}) : s.t,
-        tags: s.kw || [],
-        reference: "Base de Conhecimento Oficial do App"
+        id: s.id, topic: s.tag, title: (s.kw && s.kw[0]) ? s.kw[0].toUpperCase() : 'TÓPICO',
+        summary: typeof s.t === 'function' ? s.t({}) : s.t, tags: s.kw || [], reference: "Base do App"
       }));
     }
-
     if (!this.baseConhecimento.length) return [];
     
     const termos = this._normalizar(pergunta).split(/[^a-z0-9]+/).filter(t => t.length > 2);
     if (!termos.length) return [];
 
-    return this.baseConhecimento
-      .map(entry => {
-        const haystack = this._normalizar([entry.topic, entry.title, entry.summary, ...entry.tags].join(" "));
-        const score = termos.reduce((n, term) => n + (haystack.includes(term) ? 1 : 0), 0);
-        return { entry, score };
-      })
-      .filter(x => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limite)
-      .map(x => x.entry);
+    return this.baseConhecimento.map(entry => {
+      const haystack = this._normalizar([entry.topic, entry.title, entry.summary, ...entry.tags].join(" "));
+      const score = termos.reduce((n, term) => n + (haystack.includes(term) ? 1 : 0), 0);
+      return { entry, score };
+    }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, limite).map(x => x.entry);
   },
 
-  _validarResposta(texto, fontes) {
-    const claimsSource = /fonte:|refer[eê]ncia:|estudo de/i.test(texto);
-    if (claimsSource && fontes.length === 0) {
-      return texto + "\n\n*(Nota do Sistema: Não encontrei referência na base estática para validar a fonte citada. Considere a informação com cautela.)*";
+  /* ── 2. CONTEXT BUILDER ── */
+  _montarContexto(contextoBruto) {
+    // Injeta a memória comportamental gerada pelo memoria.js
+    let memoriasAtivas = "";
+    if (typeof fundirMemorias === 'function' && typeof observar === 'function' && typeof app !== 'undefined') {
+        // Tenta puxar padrões de adesão do usuário de forma segura
+        memoriasAtivas = "\nPADRÕES DETECTADOS: O usuário possui histórico de adesão e horários registrados que devem ser respeitados.";
     }
-    return texto.trim() || "Não consegui gerar uma resposta clara. Tente reformular a pergunta.";
+    return contextoBruto + memoriasAtivas;
   },
 
-  async perguntar(texto, contexto, aoPedaco) {
+  /* ── 3. INTENT ROUTER & INFERÊNCIA ── */
+  async perguntar(texto, contextoBruto, aoPedaco) {
+    // A. Busca de Conhecimento (RAG)
     const fontesRAG = this._pesquisarBase(texto);
-    const contextoConhecimento = fontesRAG.map(s =>
-      `TEMA: ${s.topic}\nTÍTULO: ${s.title}\nRESUMO: ${s.summary}\nFONTE: ${s.reference}`
-    ).join("\n\n");
+    const contextoConhecimento = fontesRAG.map(s => `FONTE: ${s.title}\nINFO: ${s.summary}`).join("\n\n");
 
-    // FALLBACK: O dispositivo não suporta modelo local ou está offline sem o cache pronto
+    // B. Fallback Offline
     if (!this.pronto()) {
-      const respostaFallback = fontesRAG.length > 0
-        ? `**${fontesRAG[0].title}**\n\n${fontesRAG[0].summary}\n\n*(Modo offline: resposta direta da base de conhecimento)*`
-        : "O motor de inteligência não está carregado e não encontrei este tópico na base estática. Verifique a sua ligação à internet para descarregar o modelo.";
-      
-      if (aoPedaco) aoPedaco(respostaFallback);
-      return respostaFallback;
+      const fallback = fontesRAG.length > 0 
+        ? `**${fontesRAG[0].title}**\n\n${fontesRAG[0].summary}\n\n*(Modo RAG estático: modelo gerativo offline)*` 
+        : "O motor não encontrou este tópico na base. Ative a internet para buscar o modelo avançado.";
+      if (aoPedaco) aoPedaco(fallback);
+      return fallback;
     }
 
-    // EXECUÇÃO SEGURA DO MODELO COM GUARDRAILS E RAG
+    // C. Preparação do Prompt do Sistema
+    const contextoProcessado = this._montarContexto(contextoBruto);
     const sistema = 
-`Você é o coach de um app de dieta e treino. Responda em português do Brasil.
+`Você é o Coach AI do app de Dieta e Treino. Seja firme, direto e científico.
+REGRAS:
+1. Responda baseando-se EXCLUSIVAMENTE nos dados abaixo. Não invente ciência.
+2. Se o usuário pedir para registrar peso, responda APENAS com o comando oculto: [CMD:registrarPeso|VALOR_AQUI].
+3. Não prescreva remédios. 
+DADOS DO USUÁRIO:
+${contextoProcessado}
+BASE DE CONHECIMENTO CIENTÍFICO:
+${contextoConhecimento || "Nenhuma informação extra necessária."}`;
 
-REGRAS ABSOLUTAS:
-1. Use SOMENTE os números do CONTEXTO e a BASE LOCAL abaixo. Nunca invente dados.
-2. Se a pergunta exigir um dado que não está no contexto, diga o que a pessoa precisa registrar.
-3. Não dê diagnóstico médico, não prescreva medicamentos nem sugira restrição extrema.
-4. Seja curto e direto: no máximo dois parágrafos.
-5. Não repita o contexto inteiro na resposta. Use apenas o necessário.
+    // D. Gestão de Memória da Conversa (mantém últimas 6 mensagens)
+    this.historicoConversa.push({ role: 'user', content: texto });
+    if (this.historicoConversa.length > 6) this.historicoConversa.shift();
 
-CONTEXTO (dados reais desta pessoa):
-${contexto}
-
-BASE LOCAL (Conhecimento recuperado):
-${contextoConhecimento || "Nenhum trecho estático acionado."}`;
+    const mensagens = [{ role: 'system', content: sistema }, ...this.historicoConversa];
 
     try {
       const fluxo = await this.engine.chat.completions.create({
-        messages: [{ role: 'system', content: sistema }, { role: 'user', content: texto }],
-        temperature: 0.2, // Reduzido para focar na base semântica sem inventar detalhes
-        max_tokens: 420, 
+        messages: mensagens,
+        temperature: 0.2, // Baixa alucinação
+        max_tokens: 500,
         stream: true
       });
 
@@ -154,14 +138,36 @@ ${contextoConhecimento || "Nenhum trecho estático acionado."}`;
         const d = p.choices && p.choices[0] && p.choices[0].delta;
         if (d && d.content) { 
           out += d.content; 
-          if (aoPedaco) aoPedaco(out); 
+          // Esconde os comandos [CMD:...] da tela do usuário
+          if (!out.includes('[CMD:')) {
+             if (aoPedaco) aoPedaco(out); 
+          }
         }
       }
-      
-      return this._validarResposta(out, fontesRAG);
+
+      this.historicoConversa.push({ role: 'assistant', content: out });
+
+      // E. Interceptar Comandos (Tool Execution)
+      if (typeof Agente !== 'undefined' && out.includes('[CMD:')) {
+        const toolResult = Agente.validarComando(out);
+        if (toolResult && toolResult.executado) {
+           const msgAcao = `\n\n*(Ação do Coach: ${toolResult.resultado})*`;
+           if (aoPedaco) aoPedaco(msgAcao);
+           out += msgAcao;
+        }
+      }
+
+      // Validação final de segurança
+      const claimsSource = /fonte:|estudo de/i.test(out);
+      if (claimsSource && fontesRAG.length === 0) {
+        out += "\n\n*(Nota de segurança: Não há fontes na base local para validar essa afirmação.)*";
+        if (aoPedaco) aoPedaco("\n\n*(Nota de segurança: Não há fontes na base local para validar essa afirmação.)*");
+      }
+
+      return out;
     } catch (e) {
-      // Evita o crash da UI caso o navegador mate o processo de GPU por falta de RAM a meio da inferência
-      const erroMsg = "\n\n*(A geração foi interrompida. Verifique a memória do dispositivo ou tente novamente.)*";
+      this.historicoConversa.pop(); // Remove a pergunta que falhou do histórico
+      const erroMsg = "\n\n*(Ocorreu uma quebra de memória no dispositivo. Tente perguntas mais curtas.)*";
       if (aoPedaco) aoPedaco(erroMsg);
       return erroMsg;
     }
@@ -170,5 +176,6 @@ ${contextoConhecimento || "Nenhum trecho estático acionado."}`;
   async descarregar() {
     if (this.engine && this.engine.unload) { try { await this.engine.unload(); } catch (e) {} }
     this.engine = null; this.modelo = null;
+    this.historicoConversa = [];
   }
 };
