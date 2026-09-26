@@ -1632,7 +1632,14 @@ function naoEntendi(A) {
 const API_AGENTE = {
   registrarPorFrase(frase) {
     const res = interpretarRefeicao(frase, baseCompleta(), new Date().getHours());
-    if (!res.itens.length) throw new Error('não reconheci nenhum alimento');
+    if (!res.itens.length) {
+      const dica = res.perdidos.length
+        ? res.perdidos.map(p => p.sugestoes.length
+            ? `${p.dito} (você quis dizer: ${p.sugestoes.join(', ')}?)`
+            : p.dito).join('; ')
+        : '';
+      throw new Error('não reconheci nenhum alimento' + (dica ? ': ' + dica : ''));
+    }
     chatHist.forEach(m => { if (m.t === '__PREVIEW__') m.t = '_(sugestão anterior)_'; });
     pendente = res;
     return { previa: true, n: res.itens.length };
@@ -1924,8 +1931,11 @@ function executarAcao(r, A, C, render) {
     const hora = new Date().getHours();
     const res = interpretarRefeicao(r.frase, baseCompleta(), hora);
     if (!res.itens.length) {
-      chatHist.push({ r:'ia', t: res.perdidos.length
-        ? `Não achei na base: **${res.perdidos.join(', ')}**.\n\nTenta com o nome mais comum ("arroz branco", "peito de frango"), ou cadastra o alimento na aba Hoje.`
+      const linhas = res.perdidos.map(p => p.sugestoes.length
+        ? `**${esc(p.dito)}** — você quis dizer: ${p.sugestoes.map(esc).join(', ')}?`
+        : `**${esc(p.dito)}**`);
+      chatHist.push({ r:'ia', t: linhas.length
+        ? `Não achei na base:\n\n${linhas.join('\n')}\n\nDigita de novo com um desses nomes, ou cadastra o alimento na aba Hoje.`
         : 'Não entendi quais alimentos você comeu. Escreve assim: "comi 100g de arroz, 1 bife e uma salada de tomate".' });
       return;
     }
@@ -1966,7 +1976,8 @@ function htmlPreview() {
       <input type="number" value="${i.gramas}" data-prevg="${ix}" inputmode="numeric" aria-label="Gramas de ${esc(i.nome)}">
       <span class="fr-un">g</span>
       <button type="button" class="item-x" data-prevrm="${ix}" aria-label="Remover">×</button></div>`).join('')}
-    ${pendente.perdidos.length ? `<p class="prev-perd">Não achei na base: <b>${esc(pendente.perdidos.join(', '))}</b>. Adicione à mão se for relevante.</p>` : ''}
+    ${pendente.perdidos.length ? `<p class="prev-perd">Não incluí: ${pendente.perdidos.map(p =>
+      `<b>${esc(p.dito)}</b>${p.sugestoes.length ? ` (quis dizer ${esc(p.sugestoes.join(', '))}?)` : ''}`).join('; ')}. Adicione à mão se for relevante.</p>` : ''}
     <div class="prev-tot">Total <b>${kcalDe(p,c,g,al)} kcal</b> · P ${p.toFixed(0)} · C ${c.toFixed(0)} · G ${g.toFixed(0)}</div>
     <div class="linha-flex" style="margin-top:9px">
       <select id="prev-ref" style="flex:1">${REFS.map(x=>`<option value="${x.id}"${x.id===pendente.refeicao?' selected':''}>${x.nome}</option>`).join('')}</select>
