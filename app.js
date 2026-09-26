@@ -1910,6 +1910,16 @@ function executarAcao(r, A, C, render) {
     return;
   }
 
+  if (r.tipo === 'registrar-peso') {
+    const kg = r.kg;
+    if (!kg || kg < 30 || kg > 300) { chatHist.push({ r:'ia', t:'Peso inválido. Confirma o número em kg.' }); return; }
+    const res = agenteExecutar('registrar_peso', { kg }, true);
+    chatHist.push({ r:'ia', t: res.ok
+      ? `Peso de **${br(String(kg))} kg** registrado hoje. ${res.resultado && res.resultado.bf ? 'Gordura estimada: ' + br(String(res.resultado.bf)) + '%.' : ''}`
+      : 'Não consegui registrar: ' + (res.msg || '') });
+    return;
+  }
+
   if (r.tipo === 'registrar') {
     const hora = new Date().getHours();
     const res = interpretarRefeicao(r.frase, baseCompleta(), hora);
@@ -2089,7 +2099,21 @@ function abrirChat() {
           chatHist[chatHist.length-1].t = r2 || '(resposta vazia)';
         }
       } else {
-        await IAL.perguntar(txt, contexto, p => { chatHist[chatHist.length-1].t = p; render(); });
+        // ia-local.js precisa de dados objetivos (não da string `contexto`,
+        // que é o resumo em prosa usado só pelo caminho de LLM externo) e
+        // executa ações via window.ControleAgente.executar — já existe,
+        // já valida, já confirma e já loga. Nada mais precisa ser passado.
+        const ctxIAL = {
+          nome: E.memoria.nome || E.cfg.nome || '',
+          kcal: E.cfg.kcal,
+          saldoKcal: E.cfg.kcal - somaDia().kcal,
+          protRestante: Math.max(0, E.cfg.prot - somaDia().p),
+          ritmoSemana: (function () {
+            const r = ritmoSemanal(28);
+            return r ? (r.pct * 100).toFixed(2) : null;
+          })()
+        };
+        await IAL.perguntar(txt, ctxIAL, p => { chatHist[chatHist.length-1].t = p; render(); });
       }
     } catch (err) {
       /* Queda para o embutido em QUALQUER falha. Chave errada,
@@ -2524,12 +2548,21 @@ function pintarAjustes() {
 
     <label class="campo"><span>Provedor</span><select id="iae-prov">
       ${Object.keys(IA_PROVEDORES).map(k=>`<option value="${k}"${c.iaProv===k?' selected':''}>${esc(IA_PROVEDORES[k].rot)} — ${esc(IA_PROVEDORES[k].etiqueta)}</option>`).join('')}</select></label>
-    <p class="nota" style="margin-top:0">${esc(pv.custo)} Pegue a chave em <b>${esc(pv.ondePegar)}</b>.</p>
+    ${c.iaProv==='gemini' ? `<div class="alerta" style="margin:0 0 10px;border-left-color:var(--sinal)">
+      <div class="alerta-tit">Como configurar o Gemini — 5 passos</div>
+      <p style="margin:0">1. Acesse <b>aistudio.google.com</b> e faz login com Google<br>
+      2. Clique em <b>Get API key → Create API key</b><br>
+      3. Copia a chave e cola no campo abaixo<br>
+      4. Confirma que o modelo é <b>${esc((IA_PROVEDORES.gemini||{}).modeloPadrao||'gemini-1.5-flash')}</b><br>
+      5. Clica Salvar → Testar conexão</p></div>` :
+      `<p class="nota" style="margin-top:0">${esc(pv.custo)} Chave em: <b>${esc(pv.ondePegar)}</b>.</p>`}
 
     <label class="campo"><span>Sua chave</span>
       <input type="password" id="iae-chave" placeholder="${temChaveIA?'••••••••  já salva neste aparelho':'cole aqui'}" autocomplete="off"></label>
     <label class="campo"><span>Modelo</span><select id="iae-modelo">
-      ${pv.modelos.map(m=>`<option value="${esc(m)}"${(c.iaModelo||pv.modeloPadrao)===m?' selected':''}>${esc(m)}</option>`).join('')}</select></label>
+      ${pv.modelos.map(m=>`<option value="${esc(m)}"${(c.iaModelo||pv.modeloPadrao)===m?' selected':''}>${esc(m)}</option>`).join('')}
+    </select></label>
+    <p class="nota" style="margin-top:2px;color:var(--tinta2)">Modelo padrão recomendado: <b>${esc(pv.modeloPadrao)}</b></p>
 
     <div class="linha-flex">
       <button type="button" class="btn mini" id="iae-salvar">Salvar</button>
@@ -2980,7 +3013,8 @@ function ligarEventos() {
     if (t.id==='log-limpar') { E.logAgente = []; gravar(); pintarAjustes(); return; }
     if (t.id==='iae-salvar') {
       const v = ($('#iae-chave').value||'').trim();
-      E.cfg.iaModelo = $('#iae-modelo').value;
+      const mSel = ($('#iae-modelo') || {}).value || '';
+      E.cfg.iaModelo = mSel || (IA_PROVEDORES[E.cfg.iaProv] || {}).modeloPadrao || '';
       if (v) IAChave.gravar(E.cfg.iaProv, v);
       gravar(); pintarAjustes();
       toast(IAChave.ler(E.cfg.iaProv) ? 'Salvo. Teste a conexão antes de usar.' : 'Modelo salvo — ainda falta a chave.');
@@ -3127,7 +3161,10 @@ function ligarEventos() {
       gravar(); return;
     }
     if (e.target.id==='iae-prov') {
-      E.cfg.iaProv = e.target.value; E.cfg.iaModelo = '';
+      const novoProv = e.target.value;
+      E.cfg.iaProv = novoProv;
+      // reseta modelo para o padrão do novo provedor
+      E.cfg.iaModelo = (IA_PROVEDORES[novoProv] || {}).modeloPadrao || '';
       gravar(); pintarAjustes(); return;
     }
     if (e.target.id==='cfg-modocard') {
