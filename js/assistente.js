@@ -291,8 +291,10 @@ const INTENCOES = [
     } },
 
   { id:'ajuda', peso: 2,
-    kw:['ajuda','o que voce faz','como funciona','o que posso perguntar','comandos','voce e uma ia'],
-    fn: () => 'Eu leio os seus dados registrados e respondo com os seus números — nada de conselho genérico, e nada sai do aparelho.\n\nPode perguntar coisas como:\n\n• por que não estou emagrecendo\n• quanto ainda posso comer hoje\n• devo cortar calorias\n• estou perdendo músculo\n• por que a carga não sobe\n• qual o treino de hoje\n• quando chego na meta\n• o que fazer primeiro' }
+    kw:['ajuda','o que voce faz','como funciona','o que posso perguntar','comandos','voce e uma ia',
+        'qual seu nivel','nivel de conhecimento','o que voce sabe','quem e voce','seu conhecimento',
+        'voce sabe de nutricao','voce entende de treino','voce e inteligente','quao inteligente'],
+    fn: () => 'Eu leio os seus dados registrados e respondo com os seus números — nada de conselho genérico, e nada sai do aparelho. Meu conhecimento vem de uma base de nutrição e treino escrita e revisada, não de um modelo que "conversa livremente".\n\nPode perguntar coisas como:\n\n• por que não estou emagrecendo\n• quanto ainda posso comer hoje\n• devo cortar calorias\n• estou perdendo músculo\n• por que a carga não sobe\n• qual o treino de hoje\n• quando chego na meta\n• o que fazer primeiro\n\nSe a pergunta for mais aberta que isso, tem o botão **"Ativar conversa livre com IA"** no rodapé do chat — aí você conecta sua própria chave gratuita e a conversa deixa de ser só o que está escrito aqui.' }
 ];
 
 function listar(A, ids) {
@@ -420,10 +422,11 @@ function responderLivre(texto, A, C) {
   const m = interpretar(texto);
   if (!m) {
     const top = A.filter(a=>a.sev==='critico'||a.sev==='atencao').slice(0,2);
-    return 'Não entendi bem a pergunta. Eu respondo sobre os seus dados registrados — consumo, peso, composição, treino e registro.\n\n'
+    return 'Não entendi bem a pergunta. Eu respondo sobre os seus dados registrados — consumo, peso, composição, treino e registro, a partir de uma base de conhecimento fixa.\n\n'
       + (top.length ? 'Enquanto isso, o que está pedindo atenção agora:\n\n'
           + top.map(a=>`**${a.titulo}** — ${a.achado}`).join('\n\n') + '\n\n' : '')
-      + 'Tente algo como "quanto posso comer hoje", "por que travei" ou "qual o treino de hoje".';
+      + 'Tente algo como "quanto posso comer hoje", "por que travei" ou "qual o treino de hoje".\n\n'
+      + 'Se a dúvida for mais aberta que isso, o botão **"Ativar conversa livre com IA"** no rodapé conecta sua própria chave gratuita — aí a resposta deixa de ficar presa ao que já está escrito aqui.';
   }
   return m.intencao.fn(A, C, texto);
 }
