@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════
-   IA EXTERNA — BYOK (Bring Your Own Key) - MODO TRANSPARENTE
+   IA EXTERNA — BYOK (Bring Your Own Key) - DEFINITIVO
    ══════════════════════════════════════════════════════════ */
 const CHAVE_IA_PREFIXO = 'ctrl.ia.';
 
@@ -7,10 +7,10 @@ const IA_PROVEDORES = {
   gemini: {
     rot: 'Google Gemini',
     etiqueta: 'camada gratuita',
-    modeloPadrao: 'gemini-1.5-flash',
-    modelos: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite'],
+    modeloPadrao: 'gemini-3.5-flash-lite',
+    modelos: ['gemini-3.5-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'],
     ondePegar: 'aistudio.google.com/apikey',
-    custo: 'Gratuito com a sua conta Google. Crie a chave em aistudio.google.com.',
+    custo: 'Gratuito com a tua conta Google. Cria a chave em aistudio.google.com.',
     privacidade: 'O Google pode usar pedidos da camada gratuita.',
     async chamar({ chave, modelo, sistema, pergunta }) {
       const chaveLimpa = String(chave || '').trim();
@@ -101,7 +101,6 @@ function erroIA(status, corpo, prov) {
     if (j.error && j.error.message) msg = j.error.message;
   } catch (e) {}
 
-  // AQUI MOSTRAMOS O ERRO EXACTO DO SERVIDOR PARA PARAR AS SUPOSIÇÕES
   return new Error(`[ERRO DO GOOGLE - Status ${status}]: ${msg}`);
 }
 
@@ -116,8 +115,8 @@ function sistemaIA(contexto, intensidade) {
   const tom = {
     normal:  'Tom: informativo e leve.',
     firme:   'Tom: firme e direto, cobrando o que ficou para trás.',
-    hard:    'Tom: exigente. Peça justificativa objetiva.',
-    hardmax: 'Tom: mínimo de palavras. Entregue só a ação concreta.'
+    hard:    'Tom: exigente. Pede justificativa objetiva.',
+    hardmax: 'Tom: mínimo de palavras. Entrega só a ação concreta.'
   }[intensidade] || 'Tom: firme e direto.';
 
   return `És o coach dentro de uma app de dieta e treino. Fala português do Brasil.
@@ -148,7 +147,7 @@ async function testarIA(prov, modelo) {
   const p = IA_PROVEDORES[prov];
   if (!p) throw new Error('Provedor desconhecido.');
   const chave = IAChave.ler(prov);
-  if (!chave) throw new Error('Cole a chave antes de testar.');
+  if (!chave) throw new Error('Cola a chave antes de testar.');
   const t = await p.chamar({
     chave, modelo: modelo || p.modeloPadrao,
     sistema: 'Responde apenas: ok',
