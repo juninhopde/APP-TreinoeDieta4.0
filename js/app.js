@@ -2099,7 +2099,21 @@ function abrirChat() {
           chatHist[chatHist.length-1].t = r2 || '(resposta vazia)';
         }
       } else {
-        await IAL.perguntar(txt, contexto, p => { chatHist[chatHist.length-1].t = p; render(); });
+        // ia-local.js precisa de dados objetivos (não da string `contexto`,
+        // que é o resumo em prosa usado só pelo caminho de LLM externo) e
+        // executa ações via window.ControleAgente.executar — já existe,
+        // já valida, já confirma e já loga. Nada mais precisa ser passado.
+        const ctxIAL = {
+          nome: E.memoria.nome || E.cfg.nome || '',
+          kcal: E.cfg.kcal,
+          saldoKcal: E.cfg.kcal - somaDia().kcal,
+          protRestante: Math.max(0, E.cfg.prot - somaDia().p),
+          ritmoSemana: (function () {
+            const r = ritmoSemanal(28);
+            return r ? (r.pct * 100).toFixed(2) : null;
+          })()
+        };
+        await IAL.perguntar(txt, ctxIAL, p => { chatHist[chatHist.length-1].t = p; render(); });
       }
     } catch (err) {
       /* Queda para o embutido em QUALQUER falha. Chave errada,
