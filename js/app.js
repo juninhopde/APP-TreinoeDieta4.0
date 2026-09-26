@@ -2017,6 +2017,7 @@ let modoLLM = false;
 function abrirChat() {
   const A = diagnosticar(ctxDiag());
   const sug = sugestoes(A);
+  const temChaveIA = !!IAChave.ler(E.cfg.iaProv);
   abrirGaveta(E.cfg.iaNome || 'Assistente', `
     <div class="chat" id="chat-log">${chatHist.length
       ? chatHist.map(m => `<div class="msg ${m.r}">${fmtMd(m.t)}</div>`).join('')
@@ -2028,9 +2029,9 @@ function abrirChat() {
       <button type="button" class="btn mini" id="chat-go">Enviar</button></div>
     <p class="nota">Respostas montadas a partir do seu diagnóstico. Nada sai do aparelho e nada é estimado.
     Assunto clínico eu não respondo — para isso, procure um profissional.</p>
-    <button type="button" class="btn vazado mini" id="modo-llm">
+    <button type="button" class="${!modoLLM && temChaveIA ? 'btn mini' : 'btn vazado mini'}" id="modo-llm">
       ${modoLLM ? 'Voltar ao assistente embutido'
-        : IAChave.ler(E.cfg.iaProv) ? 'Conversa livre com ' + esc((IA_PROVEDORES[E.cfg.iaProv]||{}).rot || 'IA')
+        : temChaveIA ? 'Conversa livre com ' + esc((IA_PROVEDORES[E.cfg.iaProv]||{}).rot || 'IA') + ' — toque para usar'
         : 'Ativar conversa livre com IA'}</button>`);
 
   const log = () => $('#chat-log');
@@ -3041,12 +3042,13 @@ function ligarEventos() {
       const el = $('#iae-status');
       el.innerHTML = '<div class="carregando" style="padding:12px 0"><div class="spin"></div><p>Testando…</p></div>';
       testarIA(E.cfg.iaProv, E.cfg.iaModelo || undefined).then(r => {
-        E.cfg.iaLivre = true; gravar();
+        E.cfg.iaLivre = true; modoLLM = true; gravar();
         el.innerHTML = `<div class="alerta" style="margin-top:10px;border-left-color:var(--sinal)">
           <div class="alerta-tit">Funcionando</div><p>O provedor respondeu: “${esc(r)}”.
-          A conversa livre já está disponível no assistente.</p></div>`;
+          A conversa livre já está pronta — não precisa fazer mais nada em Ajustes.</p>
+          <button type="button" class="btn mini" id="ir-chat-livre" style="margin-top:9px">Ir para o chat agora</button></div>`;
       }).catch(err => {
-        E.cfg.iaLivre = false; gravar();
+        E.cfg.iaLivre = false; modoLLM = false; gravar();
         el.innerHTML = `<div class="alerta ocre" style="margin-top:10px">
           <div class="alerta-tit">Não funcionou</div><p>${esc(err.message)}</p>
           <p class="nota" style="margin:7px 0 0">O assistente embutido continua respondendo normalmente —
@@ -3054,6 +3056,7 @@ function ligarEventos() {
       });
       return;
     }
+    if (t.id==='ir-chat-livre') { fecharGaveta(); abrirChat(); return; }
     if (t.id==='ev-add') {
       const v = ($('#ev-novo').value||'').trim();
       if (!v) return;
