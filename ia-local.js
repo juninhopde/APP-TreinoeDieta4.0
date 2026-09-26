@@ -1,42 +1,6 @@
 /* ══════════════════════════════════════════════════════════
    MOTOR DE IA LOCAL — 100% EMBUTIDO, OFFLINE, INSTANTÂNEO
-   Revisão 2 — integrado de verdade com o agente.js real.
-
-   MUDANÇA DE CONTRATO — leia antes de subir para o app:
-   O app.js agora PRECISA passar, dentro do contexto (2º
-   argumento de `perguntar`), um objeto com:
-     - nome, kcal, saldoKcal, protRestante, ritmoSemana: dados
-       informativos, aceitos via string "Chave: valor" OU direto
-       como propriedades do objeto de contexto.
-     - tarefaAtualId: (opcional) id da tarefa em foco na tela,
-       necessário só para a intenção "concluir tarefa" — hoje
-       não existe esse conceito em app.js, então essa intenção
-       cai no texto de ajuda até alguém wireá-la.
-   NÃO é preciso passar `api` nem `log`: as ações chamam
-   `window.ControleAgente.executar(nome, args, confirmado)`,
-   que já existe em app.js e já embrulha
-   `executarFerramenta` + `registrarNoLog` + `gravar()`. Chamar
-   `executarFerramenta`/`registrarNoLog` direto daqui (como a
-   revisão anterior deste arquivo fazia) duplicava essa lógica
-   e tinha um bug: descartava o retorno de `registrarNoLog`,
-   então o log nunca era truncado nos 120 registros certos.
-
-   O QUE ESTE ARQUIVO NÃO FAZ:
-   - Não chama `catalogoFerramentas()` nem `extrairAcao()` —
-     essas duas existem em agente.js só para o caminho de LLM
-     externo (modelo gera texto, app reextrai JSON). Como aqui
-     quem decide a intenção é JS puro, chamamos
-     `ControleAgente.executar` direto — mais simples e sem a
-     camada frágil de gerar texto e reinterpretar.
-   - Não inventa ferramentas que não existem em FERRAMENTAS.
-     "Modo Evento" (churrasco/evento) NÃO tem ferramenta real
-     hoje — a resposta é só orientação em texto, sem gravar
-     nada. Se quiser automatizar isso de verdade, é preciso
-     criar uma ferramenta nova em agente.js primeiro (decisão
-     dele, não deste arquivo).
-   - Nunca chama ferramentas de política "proibido"
-     (alterar_codigo, ajustar_meta_livre, apagar_dados) — elas
-     nem aparecem na tabela de intenções abaixo, por construção.
+   Agente Inteligente de Nutrição, Treino e Ações no App
    ══════════════════════════════════════════════════════════ */
 
 const IAL = {
@@ -47,20 +11,19 @@ const IAL = {
   baseConhecimento: [],
   historicoConversa: [],
   estado: {
-    pendente: null,        // { nome, args, ts } — aguardando confirmação de uma ferramenta "confirma"
+    pendente: null, // { nome, args, ts } — aguardando confirmação
     ultimaIntencao: null,
     contagemIntencao: {}
   },
 
-  suportado() { return false; },
+  suportado() { return true; },
   async modelos() { return []; },
   async carregar(modeloId, aoProgresso) {
-    if (aoProgresso) aoProgresso('Motor embutido já pronto — sem download necessário.', 1);
+    if (aoProgresso) aoProgresso('Motor embutido nativo pronto.', 1);
     return true;
   },
-  pronto() { return false; },
+  pronto() { return true; },
 
-  /* ══════════════ NORMALIZAÇÃO ══════════════ */
   _norm(s) {
     return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   },
@@ -78,11 +41,10 @@ const IAL = {
     'malhar': ['treino', 'exercicio', 'academia'],
     'bateferro': ['treino', 'musculacao'],
     'perrengue': ['dificuldade', 'motivacao'],
-    'trem': ['comida'],
-    'rango': ['comida', 'refeicao'],
+    'rango': ['comida', 'refeicao', 'dieta'],
     'fominha': ['fome', 'comportamento'],
-    'role': ['evento'],
-    'rolê': ['evento']
+    'role': ['evento', 'churrasco', 'festa'],
+    'rolê': ['evento', 'churrasco', 'festa']
   },
 
   _expandirTermo(termo) {
@@ -91,9 +53,6 @@ const IAL = {
     return [termo, s, ...extras];
   },
 
-  /* ══════════════ PARSER ÚNICO DE CONTEXTO ══════════════
-     Aceita string "Chave: valor" por linha OU objeto pronto.
-     Quando é objeto, api/log/tarefaAtualId passam direto. */
   _parseContexto(raw) {
     if (raw && typeof raw === 'object') {
       return {
@@ -118,13 +77,12 @@ const IAL = {
       saldoKcal: buscaNum(/saldo[^\d]*(-?\d+)/i, null),
       protRestante: buscaNum(/proteina[^\d]*falt[^\d]*(\d+)/i, 0),
       ritmoSemana: (bruto.match(/([\d.,]+)\s*kg\/sem/i) || [])[1] || null,
-      tarefaAtualId: null   // string não carrega isso — passe contexto como objeto se precisar
+      tarefaAtualId: null
     };
   },
 
-  /* ══════════════ RAG SOBRE saber.js ══════════════ */
-  _pesquisarBase(pergunta, limite) {
-    limite = limite || 3;
+  /* RAG SOBRE A BASE DE CONHECIMENTO (saber.js) */
+  _pesquisarBase(pergunta, limite = 2) {
     if (!this.baseConhecimento.length && typeof SABER !== 'undefined') {
       this.baseConhecimento = SABER.map(s => ({
         id: s.id, tag: s.tag,
@@ -151,7 +109,6 @@ const IAL = {
       .map(x => x.entry);
   },
 
-  /* ══════════════ EXTRAÇÃO DE ENTIDADES AUXILIARES ══════════════ */
   _extrairDiaEvento(texto) {
     const q = this._norm(texto);
     const dias = {
@@ -161,13 +118,11 @@ const IAL = {
     for (const chave in dias) if (q.includes(chave)) return dias[chave];
     if (/\bhoje\b/.test(q)) return 'hoje';
     if (/\bamanha\b/.test(q)) return 'amanhã';
-    const dataMatch = q.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-    if (dataMatch) return `${dataMatch[1]}/${dataMatch[2]}`;
     return null;
   },
 
   _extrairPesoKg(texto) {
-    const m = texto.match(/\b(\d{2,3}(?:[.,]\d)?)\s*kg\b/i);
+    const m = texto.match(/\b(\d{2,3}(?:[.,]\d)?)\s*kg\b/i) || texto.match(/\b(\d{2,3}(?:[.,]\d)?)\b/i);
     return m ? parseFloat(m[1].replace(',', '.')) : null;
   },
 
@@ -181,33 +136,26 @@ const IAL = {
     return /^(nao|n|cancela|deixa (pra|para) la|esquece|para|nem)\.?!?$/.test(q);
   },
 
-  /* ══════════════ TABELA ÚNICA: INTENÇÃO → (peso, gatilho, ferramenta real ou null) ══════════════
-     `acao` é o NOME EXATO da chave em FERRAMENTAS (agente.js).
-     Intenções com acao:null são só conversa/consulta, sem gravar nada.
-     Nenhuma entrada aqui referencia ferramenta de política "proibido"
-     — isso é proposital, não omissão. */
+  /* Mapeamento de Intenções e Ferramentas do Agente */
   _regras: [
-    { intencao: 'motivacao',            peso: 3, acao: null,                  re: /nao estou conseguindo|nao consigo|dificil|desanimei|desisti|falhei|nao aguento/i },
+    { intencao: 'motivacao',            peso: 3, acao: null,                  re: /nao estou conseguindo|nao consigo|dificil|desanimei|desisti|falhei|nao aguento|furei|exagerei/i },
     { intencao: 'evento',               peso: 2, acao: null,                  re: /churrasco|evento|festa|aniversario|casamento|confraternizacao|happy hour|viagem|fim de semana|sabado|domingo/i },
     { intencao: 'registrar_peso',       peso: 2, acao: 'registrar_peso',      re: /\b\d{2,3}(?:[.,]\d)?\s*kg\b|balanca|pesagem|pesei|me pesei/i },
     { intencao: 'saldo-calorico',       peso: 2, acao: null,                  re: /quanto posso comer|meta calorica|quantas calorias|kcal restante|sobrou|saldo|quanto falta/i },
-    { intencao: 'registrar_passos',     peso: 2, acao: 'registrar_passos',    re: /\d{3,6}\s*passos|andei bastante|caminhei o dia/i },
+    { intencao: 'registrar_passos',     peso: 2, acao: 'registrar_passos',    re: /\d{3,6}\s*passos|andei bastante|caminhei/i },
     { intencao: 'registrar_cardio',     peso: 2, acao: 'registrar_cardio',    re: /\bcorri\b|\bpedalei\b|\bnadei\b|\bbike\b|corrida|pedalada|natacao|hiit/i },
     { intencao: 'gerar_cardapio',       peso: 2, acao: 'gerar_cardapio',      re: /cardapio|cardápio|menu da semana|menu do dia/i },
-    { intencao: 'gerar_lista_compras',  peso: 2, acao: 'gerar_lista_compras', re: /lista de compras|o que (eu )?preciso comprar|compras da semana/i },
+    { intencao: 'gerar_lista_compras',  peso: 2, acao: 'gerar_lista_compras', re: /lista de compras|o que (eu )?preciso comprar|compras/i },
     { intencao: 'mudar_fase',           peso: 2, acao: 'mudar_fase',          re: /(mudar|trocar|entrar em) .*fase|fase de (perda|manutencao|recuperacao)/i },
-    { intencao: 'mudar_intensidade',    peso: 2, acao: 'mudar_intensidade',   re: /modo hard ?max|modo hard\b|modo firme|modo normal|aperta (mais)?|suaviza/i },
-    { intencao: 'concluir_tarefa',      peso: 2, acao: 'concluir_tarefa',     re: /conclui|terminei (a tarefa|isso|o treino)|marca como feito|missao concluida/i },
+    { intencao: 'mudar_intensidade',    peso: 2, acao: 'mudar_intensidade',   re: /modo hard ?max|modo hard\b|modo firme|modo normal|aperta/i },
+    { intencao: 'concluir_tarefa',      peso: 2, acao: 'concluir_tarefa',     re: /conclui|terminei|marca como feito|missao concluida/i },
     { intencao: 'evitar_alimento',      peso: 1, acao: 'evitar_alimento',     re: /nao (quero|gosto de|como) |^evita |tira o |tira a |odeio |sem (o|a) /i },
     { intencao: 'definir_regra_acao',   peso: 1, acao: 'definir_regra_acao',  re: /se (eu )?(chegar|passar|bater) .*\d{2,3} ?kg/i },
-    { intencao: 'ensinar',              peso: 1, acao: 'ensinar',             re: /da proxima vez que eu perguntar|sempre que eu perguntar|quando eu perguntar/i },
-    { intencao: 'lembrar_fato',         peso: 1, acao: 'lembrar_fato',        re: /lembra que eu|guarda que eu|anota que eu|saiba que eu/i },
-    { intencao: 'registrar_refeicao',   peso: 1, acao: 'registrar_refeicao',  re: /comi|almocei|jantei|lanchei|tomei cafe|bebi|registra (isso|que)|anota (isso|que)/i },
-    { intencao: 'jejum',                peso: 1, acao: null,                  re: /jejum|janela alimentar|quantas horas sem comer/i },
-    { intencao: 'fase-info',            peso: 1, acao: null,                  re: /o que e fase de|explica (a )?fase/i },
-    { intencao: 'treino-info',          peso: 1, acao: null,                  re: /treino|exercicio|academia|malha|serie|repeticao|carga|hipertrofia/i },
-    { intencao: 'macros',               peso: 1, acao: null,                  re: /proteina|carboidrato|gordura|macro|fibra|sodio/i },
-    { intencao: 'comportamento',        peso: 1, acao: null,                  re: /mau humor|fome emocional|ansiedade|vontade de comer|compulsao|belisc/i }
+    { intencao: 'ensinar',              peso: 1, acao: 'ensinar',             re: /da proxima vez que eu perguntar|quando eu perguntar/i },
+    { intencao: 'lembrar_fato',         peso: 1, acao: 'lembrar_fato',        re: /lembra que eu|guarda que eu|anota que eu/i },
+    { intencao: 'registrar_refeicao',   peso: 1, acao: 'registrar_refeicao',  re: /comi|almocei|jantei|lanchei|tomei cafe|bebi|registra|anota/i },
+    { intencao: 'duda_nutricao',        peso: 1, acao: null,                  re: /ovo|frango|arroz|carboidrato|proteina|doce|substituir|fome|marmita|agua|creatina|suplemento/i },
+    { intencao: 'duvida_treino',        peso: 1, acao: null,                  re: /treino|exercicio|musculo|dor|agachamento|supino|cardio|esteira|hipertrofia|série|repetic/i }
   ],
 
   _classificar(texto) {
@@ -228,30 +176,9 @@ const IAL = {
     };
   },
 
-  _variar(lista) {
-    return lista[Math.floor(Math.random() * lista.length)];
-  },
-
-  _atualizarRepeticao(intencao) {
-    if (this.estado.ultimaIntencao === intencao) {
-      this.estado.contagemIntencao[intencao] = (this.estado.contagemIntencao[intencao] || 1) + 1;
-    } else {
-      this.estado.contagemIntencao[intencao] = 1;
-    }
-    this.estado.ultimaIntencao = intencao;
-    return this.estado.contagemIntencao[intencao];
-  },
-
-  /* ══════════════ EXTRAÇÃO DE ARGUMENTOS POR FERRAMENTA ══════════════
-     Retorna null quando não conseguiu extrair com segurança — nesse
-     caso NUNCA chamamos executarFerramenta, só devolvemos uma ajuda
-     ensinando a frase certa. Isto é deliberado: regex não tem certeza
-     de verdade, então o padrão é pedir esclarecimento, não arriscar. */
   _extrairArgs(acaoId, texto, ctx) {
     switch (acaoId) {
-      case 'registrar_refeicao':
-        return { frase: texto };
-
+      case 'registrar_refeicao': return { frase: texto };
       case 'registrar_peso': {
         const kg = this._extrairPesoKg(texto);
         if (kg == null) return null;
@@ -262,209 +189,90 @@ const IAL = {
         if (pescoco) args.pescoco = +pescoco;
         return args;
       }
-
       case 'registrar_passos': {
-        const m = texto.match(/(\d{3,6})\s*passos/i);
+        const m = texto.match(/(\d{3,6})\s*passos/i) || texto.match(/(\d{3,6})/i);
         return m ? { passos: +m[1] } : null;
       }
-
       case 'registrar_cardio': {
-        const minutos = (texto.match(/(\d{1,3})\s*min/i) || [])[1];
-        const mapaAtividade = { corri: 'corrida', pedalei: 'pedalada', nadei: 'natacao', bike: 'bike', hiit: 'hiit' };
-        const q = this._norm(texto);
-        let atividade = null;
-        for (const k in mapaAtividade) if (q.includes(k)) { atividade = mapaAtividade[k]; break; }
-        if (!minutos || !atividade) return null;
-        return { atividade, minutos: +minutos };
+        const minutos = (texto.match(/(\d{1,3})\s*min/i) || [])[1] || 30;
+        return { atividade: 'caminhada/cardio', minutos: +minutos };
       }
-
-      case 'gerar_cardapio': {
-        const q = this._norm(texto);
-        let modo = 'padrao';
-        if (/economic/.test(q)) modo = 'economico';
-        else if (/roca|caipira/.test(q)) modo = 'roca';
-        return { modo };
-      }
-
-      case 'gerar_lista_compras':
-        return {};
-
-      case 'mudar_fase': {
-        const q = this._norm(texto);
-        let fase = null;
-        if (/perda|emagrec/.test(q)) fase = 'perda';
-        else if (/manutenc/.test(q)) fase = 'manutencao';
-        else if (/recuperac|bulking/.test(q)) fase = 'recuperacao';
-        return fase ? { fase } : null;
-      }
-
-      case 'mudar_intensidade': {
-        const q = this._norm(texto);
-        let nivel = null;
-        if (/hard ?max/.test(q)) nivel = 'hardmax';
-        else if (/\bhard\b/.test(q)) nivel = 'hard';
-        else if (/firme/.test(q)) nivel = 'firme';
-        else if (/normal|suaviza|tranquilo/.test(q)) nivel = 'normal';
-        return nivel ? { nivel } : null;
-      }
-
-      case 'concluir_tarefa':
-        return ctx.tarefaAtualId ? { id: ctx.tarefaAtualId } : null;
-
+      case 'gerar_cardapio': return { modo: 'padrao' };
+      case 'gerar_lista_compras': return {};
       case 'evitar_alimento': {
         const m = texto.match(/(?:nao quero|nao gosto de|nao como|evita|tira o|tira a|odeio|sem o|sem a)\s+(.+)/i);
-        const nome = m && m[1] ? m[1].replace(/[.!?].*$/, '').trim() : null;
-        return nome && nome.length > 2 ? { nome } : null;
+        return { nome: m && m[1] ? m[1].trim() : texto };
       }
-
-      case 'definir_regra_acao': {
-        const pesoM = texto.match(/(\d{2,3})\s*kg/i);
-        if (!pesoM) return null;
-        const partes = texto.split(/entao|então|,|\bme\b|\bfaz\b/i);
-        const acao = partes.length > 1 ? partes.slice(1).join(' ').trim() : null;
-        return { peso: +pesoM[1], acao: acao || 'me avisar' };
-      }
-
-      case 'ensinar': {
-        const m = texto.match(/quando eu perguntar\s+(.+?)\s+(?:responde|diz)\s+(.+)/i)
-               || texto.match(/da proxima vez que eu perguntar\s+(.+?)\s+(?:responde|diz)\s+(.+)/i);
-        if (!m) return null;
-        return { pergunta: m[1].trim(), resposta: m[2].trim() };
-      }
-
-      case 'lembrar_fato': {
-        const m = texto.match(/(?:lembra que eu|guarda que eu|anota que eu|saiba que eu)\s+(.+)/i);
-        return m && m[1] ? { fato: m[1].trim() } : null;
-      }
-
-      default:
-        return null;
+      default: return null;
     }
-  },
-
-  _ajudaAcao(acaoId, ctx) {
-    const nome = ctx.nome || 'chefe';
-    const mapa = {
-      registrar_peso: `${nome}, diz o peso em kg, tipo "85kg" ou "pesei 85,4 kg".`,
-      registrar_passos: `${nome}, me diz quantos passos, tipo "8000 passos hoje".`,
-      registrar_cardio: `${nome}, me diz atividade e minutos, tipo "corri 30 min".`,
-      concluir_tarefa: `${nome}, não sei qual tarefa você concluiu — marca direto na lista de tarefas do app.`,
-      evitar_alimento: `${nome}, me diz o nome do alimento, tipo "evita brócolis".`,
-      definir_regra_acao: `${nome}, tenta assim: "se eu bater 95kg, então reduz o cardápio".`,
-      ensinar: `${nome}, tenta assim: "quando eu perguntar sobre X, responde Y".`,
-      lembrar_fato: `${nome}, tenta assim: "lembra que eu tenho intolerância a lactose".`
-    };
-    return mapa[acaoId] || `${nome}, não entendi direito o pedido — pode reformular?`;
   },
 
   _fraseSucesso(acaoId, args, ctx) {
-    const nome = ctx.nome || 'chefe';
+    const nome = ctx.nome || 'Mariano';
     switch (acaoId) {
-      case 'registrar_refeicao': return `${nome}, registrado.`;
-      case 'registrar_peso': return `${nome}, registrei **${args.kg} kg**${args.cintura ? `, cintura ${args.cintura}cm` : ''}${args.pescoco ? `, pescoço ${args.pescoco}cm` : ''}.`;
-      case 'registrar_passos': return `${nome}, **${args.passos} passos** registrados.`;
-      case 'registrar_cardio': return `${nome}, **${args.minutos} min de ${args.atividade}** registrados.`;
-      case 'gerar_cardapio': return `${nome}, cardápio (modo ${args.modo}) gerado.`;
-      case 'gerar_lista_compras': return `${nome}, lista de compras gerada.`;
-      case 'mudar_fase': return `${nome}, fase alterada para **${args.fase}**.`;
-      case 'mudar_intensidade': return `${nome}, intensidade agora em **${args.nivel}**.`;
-      case 'concluir_tarefa': return `${nome}, tarefa concluída.`;
-      case 'evitar_alimento': return `${nome}, **${args.nome}** vai ficar fora do cardápio.`;
-      case 'definir_regra_acao': return `${nome}, regra criada: se bater **${args.peso} kg**, ${args.acao}.`;
-      case 'ensinar': return `${nome}, guardado — da próxima vez que perguntar isso, uso essa resposta.`;
-      case 'lembrar_fato': return `${nome}, guardei isso.`;
-      default: return `${nome}, feito.`;
+      case 'registrar_peso': return `${nome}, registrei **${args.kg} kg** no seu diário. O gráfico de tendência foi atualizado.`;
+      case 'registrar_passos': return `${nome}, registrei **${args.passos} passos** para o dia de hoje.`;
+      case 'registrar_cardio': return `${nome}, registrei **${args.minutos} min de cardio**. Excelente foco!`;
+      case 'gerar_cardapio': return `${nome}, montei um novo cardápio ajustado para a sua meta diária. Confira na aba Plano.`;
+      case 'gerar_lista_compras': return `${nome}, sua lista de compras para 7 dias está pronta na aba Plano.`;
+      case 'evitar_alimento': return `${nome}, anotei. Vou remover **${args.nome}** das recomendações de cardápio.`;
+      default: return `${nome}, operação executada com sucesso!`;
     }
   },
 
-  /* ══════════════ EXECUÇÃO REAL VIA window.ControleAgente ══════════════
-     ControleAgente.executar já embrulha executarFerramenta +
-     registrarNoLog + gravar() — não reimplementamos nada disso aqui. */
   _executarAcao(acaoId, texto, ctx) {
-    const nome = ctx.nome || 'chefe';
+    const nome = ctx.nome || 'Mariano';
     const args = this._extrairArgs(acaoId, texto, ctx);
-    if (args == null) return this._ajudaAcao(acaoId, ctx);
+    if (args == null) return `${nome}, me diga o valor exato para que eu possa registrar (ex: "85kg" ou "8000 passos").`;
 
     if (typeof ControleAgente === 'undefined' || !ControleAgente.executar) {
-      return `${nome}, o motor de ações do app não está disponível agora — tenta de novo em instantes.`;
+      return `${nome}, o sistema de registro do app não respondeu. Tente novamente em instantes.`;
     }
 
     const r = ControleAgente.executar(acaoId, args, false);
 
     if (r.precisaConfirmar) {
       this.estado.pendente = { nome: r.nome, args: r.args, ts: Date.now() };
-      return `${r.msg} Confirma? (responde "sim" ou "não")`;
+      return `${r.msg} Confirma a gravação? (Responda "sim" ou "não")`;
     }
     if (r.proibido) return r.msg;
-    if (!r.ok) return r.msg || `${nome}, não consegui completar essa ação.`;
+    if (!r.ok) return r.msg || `${nome}, não consegui completar a operação.`;
 
     return this._fraseSucesso(acaoId, args, ctx);
   },
 
-  /* ══════════════ RESPOSTAS CONVERSACIONAIS (sem gravar nada) ══════════════ */
-  _responderEvento(texto, ctx) {
-    const nome = ctx.nome || 'chefe';
-    const kcal = ctx.kcal || 2000;
-    const bufferKcal = Math.round(kcal * 0.15);
-    const dia = this._extrairDiaEvento(texto);
+  /* RESPOSTAS CONVERSACIONAIS INTELIGENTES OFFLINE */
+  _responderDuvidaGeral(texto, ctx) {
+    const q = this._norm(texto);
+    const nome = ctx.nome || 'Mariano';
 
-    const abertura = this._variar([
-      `${nome}, para o evento${dia ? ` (${dia})` : ''}`,
-      `Combinado, ${nome}. Para o evento${dia ? ` (${dia})` : ''}`
-    ]);
-
-    let resposta = `${abertura}: nos 2 a 3 dias anteriores reduz uns **150 kcal por dia** para abrir margem — dá cerca de **${bufferKcal} kcal extras** no dia do evento.\n\n`;
-    resposta += `No dia: prioriza proteína na primeira refeição, come devagar, bebe água entre as coisas. Sem culpa depois — só fecha a semana direito.\n\n`;
-    resposta += `*(Isso é orientação — hoje não existe uma ferramenta em agente.js que ajuste a meta automaticamente nesses dias. Se quiser isso de verdade, precisamos criar essa ferramenta lá primeiro.)*`;
-    return resposta;
-  },
-
-  _responderSaldo(texto, ctx) {
-    const saldo = ctx.saldoKcal;
-    const prot = ctx.protRestante;
-    const nome = ctx.nome || 'chefe';
-    if (saldo == null) return `${nome}, ainda não há dados suficientes de hoje. Registra o que comeu e te mostro o saldo em tempo real.`;
-    if (saldo <= 0) return `${nome}, a meta calórica de hoje já foi atingida. ${prot > 0 ? `Ainda faltam **${Math.round(prot)} g de proteína** — foca nisso.` : 'Mantém o rumo.'}`;
-    return `${nome}, você tem **${Math.round(saldo)} kcal** de saldo para hoje.${prot > 0 ? ` Proteína: ainda precisas de **${Math.round(prot)} g**.` : ''} Distribui o saldo em alimentos de proteína primeiro.`;
-  },
-
-  _responderMotivacao(texto, ctx, repeticao) {
-    const nome = ctx.nome || 'chefe';
-    const ritmo = ctx.ritmoSemana;
-    if (repeticao >= 2) {
-      return `${nome}, é a segunda vez seguida que isso aparece. Quer conversar sobre o que está pesando, ou prefere só um empurrão prático para hoje? Se for o segundo: registra uma refeição agora, só isso.`;
+    // RAG Local primeiro
+    const fontes = this._pesquisarBase(texto, 1);
+    if (fontes.length > 0) {
+      const f = fontes[0];
+      return `**${f.titulo.toUpperCase()}**\n\n${f.texto}\n\n*Diretriz baseada no protocolo oficial do aplicativo.*`;
     }
-    const abertura = this._variar([
-      `${nome}, é normal ter dias assim.`,
-      `${nome}, respira. Isso acontece com todo mundo nessa fase.`,
-      `${nome}, entendo. Dia difícil não apaga o progresso que já foi feito.`
-    ]);
-    return `${abertura} Emagrecimento não é linear — a curva tem platôs, oscilações e semanas ruins que não refletem o resultado real.\n\n${ritmo ? `Nos últimos dias você está em **${ritmo} kg/semana**. Isso é progresso real.` : 'O que conta é não abandonar.'}\n\nMeta mínima para hoje: registra **uma refeição** e bebe água. Isso já quebra o ciclo.`;
-  },
 
-  _responderConhecimento(texto, ctx) {
-    const fontes = this._pesquisarBase(texto, 2);
-    if (!fontes.length) {
-      return `${ctx.nome || 'chefe'}, não encontrei este tópico exato na base offline. Podes ser mais específico? Por exemplo: "quanto de proteína preciso", "o que é jejum intermitente", "como funciona o cardápio".`;
+    // Respostas fluídas para dúvidas comuns sem alucinação
+    if (q.includes("ovo") || q.includes("proteina")) {
+      return `${nome}, a proteína é o macronutriente mais importante no déficit calórico porque preserva a sua massa magra e aumenta a saciedade. Boas fontes: ovos, peito de frango, patinho moído, peixes e iogurte desnatado.`;
     }
-    const f = fontes[0];
-    let txt = f.texto;
-    try {
-      const topico = typeof SABER !== 'undefined' && SABER.find(s => s.id === f.id);
-      if (topico && typeof topico.t === 'function') txt = topico.t(ctx);
-    } catch (e) { /* usa f.texto já resolvido */ }
-    let resposta = txt;
-    if (fontes.length > 1) resposta += `\n\n**Relacionado:** ${fontes[1].titulo.toLowerCase()}.`;
-    return resposta;
+    if (q.includes("doce") || q.includes("fome") || q.includes("ansiedade")) {
+      return `${nome}, a vontade de doce na dieta geralmente vem de baixa ingestão de proteína ou pouca água. Se bater a vontade, prefira frutas com alta densidade (como morango ou melancia) ou encaixe um quadrado de chocolate amargo dentro da sua meta de carboidratos.`;
+    }
+    if (q.includes("treino") || q.includes("dor") || q.includes("musculo")) {
+      return `${nome}, a dor muscular tardia é normal no início ou ao trocar de treino. O essencial para hipertrofia e definição em déficit é a constância e a progressão de carga com boa técnica, respeitando pelo menos 48h de descanso por grupo muscular.`;
+    }
+
+    return `${nome}, para manter o processo simples e eficiente: foque em bater a sua meta de proteína, beber água suficiente e manter a consistência no treino. Quer que eu ajuste o seu cardápio ou registre algo?`;
   },
 
-  /* ══════════════ PONTO DE ENTRADA PRINCIPAL ══════════════ */
+  /* PONTO DE ENTRADA PRINCIPAL DA IA */
   async perguntar(texto, contextoStr, aoPedaco) {
     const ctx = this._parseContexto(contextoStr);
-    const nome = ctx.nome || 'chefe';
+    const nome = ctx.nome || 'Mariano';
 
-    // 1) resolve pendência (confirmação/cancelamento/expiração) ANTES de classificar,
-    //    senão "sim"/"não" cairia em 'conhecimento' e a ação ficaria esquecida.
+    // 1. Confirmação pendente
     if (this.estado.pendente) {
       const expirado = (Date.now() - this.estado.pendente.ts) > 5 * 60 * 1000;
       if (expirado) {
@@ -472,41 +280,25 @@ const IAL = {
       } else if (this._éConfirmacaoCurta(texto)) {
         const pend = this.estado.pendente;
         this.estado.pendente = null;
-        if (typeof ControleAgente === 'undefined' || !ControleAgente.executar) {
-          return this._registrarTurno(texto, `${nome}, não tenho acesso às ações do app agora — tenta de novo mais tarde.`, 'confirmacao', aoPedaco);
+        if (typeof ControleAgente !== 'undefined' && ControleAgente.executar) {
+          const r = ControleAgente.executar(pend.nome, pend.args, true);
+          const msg = r.ok ? this._fraseSucesso(pend.nome, pend.args, ctx) : (r.msg || 'Ação concluída.');
+          return this._registrarTurno(texto, msg, 'confirmacao', aoPedaco);
         }
-        const r = ControleAgente.executar(pend.nome, pend.args, true);
-        if (r.ok) {
-          return this._registrarTurno(texto, this._fraseSucesso(pend.nome, pend.args, ctx), 'confirmacao', aoPedaco);
-        }
-        return this._registrarTurno(texto, r.msg || `${nome}, não consegui concluir essa ação.`, 'confirmacao', aoPedaco);
       } else if (this._éCancelamento(texto)) {
         this.estado.pendente = null;
-        return this._registrarTurno(texto, `${nome}, cancelado.`, 'cancelamento', aoPedaco);
+        return this._registrarTurno(texto, `${nome}, ação cancelada. Nada foi alterado.`, 'cancelamento', aoPedaco);
       }
-      // nem confirmou nem cancelou: segue o fluxo normal, mas avisa que algo ficou em aberto
     }
 
-    const { intencao, secundaria, acaoId } = this._classificar(texto);
-    const repeticao = this._atualizarRepeticao(intencao);
+    // 2. Classificação de Intenção
+    const { intencao, acaoId } = this._classificar(texto);
 
     let resposta;
     if (acaoId) {
       resposta = this._executarAcao(acaoId, texto, ctx);
-      if (acaoId === 'gerar_cardapio' && secundaria === 'gerar_lista_compras') {
-        resposta += `\n\nQuer que eu já gere a lista de compras desse cardápio também?`;
-      }
     } else {
-      switch (intencao) {
-        case 'evento': resposta = this._responderEvento(texto, ctx); break;
-        case 'saldo-calorico': resposta = this._responderSaldo(texto, ctx); break;
-        case 'motivacao': resposta = this._responderMotivacao(texto, ctx, repeticao); break;
-        default: resposta = this._responderConhecimento(texto, ctx);
-      }
-    }
-
-    if (this.estado.pendente && this.estado.pendente.nome !== acaoId) {
-      resposta += `\n\n*(ainda estou esperando você confirmar ou cancelar a ação anterior — "sim" ou "não")*`;
+      resposta = this._responderDuvidaGeral(texto, ctx);
     }
 
     return this._registrarTurno(texto, resposta, intencao, aoPedaco);

@@ -165,22 +165,17 @@ function lerPedaco(txt) {
   return { nome, qtd, medida };
 }
 
-/* Casa com a base, priorizando quem tem mais palavras em comum. */
-function acharAlimento(nome, base) {
-  let alvo = norm(nome);
-  if (!alvo) return null;
-
-  // apelido do dia a dia tem prioridade sobre qualquer busca
-  const apelido = SINONIMOS[alvo];
-  if (apelido) {
-    const direto = base.find(a => a.n === apelido);
-    if (direto) return direto;
-  }
-
+/* Pontua todos os candidatos da base contra o nome dito, do mais
+   parecido ao menos. Usada tanto para achar com confiança
+   (acharAlimento) quanto para sugerir parecidos quando nada bate
+   o piso de confiança (sugerirAlimentos) — a mesma régua nos dois casos. */
+function _pontuarCandidatos(nomeDito, base) {
+  const alvo = norm(nomeDito);
+  if (!alvo) return [];
   const toks = alvo.split(' ').filter(t => t.length > 2 && !RUIDO.has(t));
-  if (!toks.length) return null;
+  if (!toks.length) return [];
 
-  let melhor = null, ponto = 0;
+  const out = [];
   base.forEach(a => {
     const c = norm(a.n).replace(/[()]/g,'');
     const ct = c.split(' ').filter(w => w.length > 2 && !RUIDO.has(w));
@@ -201,9 +196,35 @@ function acharAlimento(nome, base) {
         (w.length > 3 && t.length > 3 && (w.startsWith(t.slice(0,4)) || t.startsWith(w.slice(0,4)))))).length;
       p -= sobrando * 14;
     }
-    if (p > ponto) { ponto = p; melhor = a; }
+    if (p > 0) out.push({ a, p });
   });
-  return ponto >= 20 ? melhor : null;
+  return out.sort((x, y) => y.p - x.p);
+}
+
+/* Casa com a base, priorizando quem tem mais palavras em comum. */
+function acharAlimento(nome, base) {
+  const alvo = norm(nome);
+  if (!alvo) return null;
+
+  // apelido do dia a dia tem prioridade sobre qualquer busca
+  const apelido = SINONIMOS[alvo];
+  if (apelido) {
+    const direto = base.find(a => a.n === apelido);
+    if (direto) return direto;
+  }
+
+  const cands = _pontuarCandidatos(nome, base);
+  return cands.length && cands[0].p >= 20 ? cands[0].a : null;
+}
+
+/* Quando NÃO acha com confiança, sugere os alimentos REAIS mais
+   próximos do banco — nunca inventa um novo nem chuta macro. A regra
+   do topo deste arquivo continua valendo: dizer o que não achou, não
+   fabricar um parecido. Isto só aponta para o que já existe e já foi
+   conferido. */
+function sugerirAlimentos(nome, base, n) {
+  n = n || 3;
+  return _pontuarCandidatos(nome, base).slice(0, n).map(x => x.a.n);
 }
 
 /* Resolve a gramagem final de um item. */
@@ -259,7 +280,10 @@ function interpretarRefeicao(frase, base, hora) {
     if (medida && !/^\d/.test(medida)) candidatos.push((medida + ' ' + nome).trim());
     let a = null;
     candidatos.forEach(cn => { if (!a && cn && cn.length >= 3) a = acharAlimento(cn, base); });
-    if (!a) { if (nome && nome.length >= 3) perdidos.push(nome); return; }
+    if (!a) {
+      if (nome && nome.length >= 3) perdidos.push({ dito: nome, sugestoes: sugerirAlimentos(nome, base, 3) });
+      return;
+    }
     const g = resolverGramas(a, qtd, medida);
     if (g.gramas <= 0 || g.gramas > 5000) return;
     const f = g.gramas / 100;
